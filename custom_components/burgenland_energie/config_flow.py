@@ -121,7 +121,11 @@ class BurgenlandEnergieConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_handover(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is None:
             url = handover.async_create(self.hass, self.flow_id)
-            return self.async_external_step(step_id="handover", url=url)
+            # The link is also in the text: browsers often block the tab the
+            # frontend opens automatically as a pop-up.
+            return self.async_external_step(
+                step_id="handover", url=url, description_placeholders={"url": url}
+            )
         # Called by the handover view with the token.
         self._handover_token = user_input[CONF_REFRESH_TOKEN]
         return self.async_external_step_done(next_step_id="handover_done")

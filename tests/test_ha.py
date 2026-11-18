@@ -292,6 +292,7 @@ async def _start_handover(hass):
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "handover"})
     assert result["type"] is FlowResultType.EXTERNAL_STEP
     assert result["url"].startswith("/api/burgenland_energie/handover/")
+    assert result["description_placeholders"] == {"url": result["url"]}
     return result
 
 

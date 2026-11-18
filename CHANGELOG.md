@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] – 2026-11-18
+
+### Fixed
+- The handover dialog shows the handover link itself, for browsers that
+  block the automatically opened tab as a pop-up.
+
 ## [0.2.0] – 2026-11-18
 
 ### Added

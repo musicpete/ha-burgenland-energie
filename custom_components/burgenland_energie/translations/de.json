@@ -19,7 +19,7 @@
       },
       "handover": {
         "title": "Portal-Sitzung übergeben",
-        "description": "In einem neuen Tab hat sich eine Home-Assistant-Seite geöffnet. Ziehe deren Lesezeichen in die Lesezeichenleiste, melde dich auf meine.burgenlandenergie.at an und klicke dort auf das Lesezeichen. Dieser Dialog läuft danach automatisch weiter. Der Link gilt einmalig und 15 Minuten."
+        "description": "Falls sich kein Tab geöffnet hat (Pop-up blockiert): **[Übergabeseite öffnen]({url})**.\n\nZiehe dort das Lesezeichen in die Lesezeichenleiste, melde dich auf meine.burgenlandenergie.at an und klicke dort auf das Lesezeichen. Dieser Dialog läuft danach automatisch weiter. Der Link gilt einmalig und 15 Minuten."
       },
       "paste": {
         "title": "Token einfügen",
