@@ -3,6 +3,26 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] – 2026-11-18
+
+### Added
+- `sensor.burgenland_energie_datenstand` (complete / incomplete / error):
+  checks that every invoice is saved as a verified PDF, reports missing
+  invoices, stale usage data and fetch errors.
+- Signed per-invoice PDF links in the invoice list (valid 24 h, one file
+  each, renewed on every update), served by an authenticated view.
+- `download_invoice` with `all_missing: true` saves every missing invoice.
+- `kwh_pro_monat` on the meter sensors.
+
+### Fixed
+- Invoice amounts are labelled correctly: the portal reports the amount to
+  pay ("Zu zahlender Betrag"), not the invoice total (attribute
+  `zahlbetrag`, sensor "Latest invoice · amount due").
+- Yearly totals and the latest metered day now come from the stored
+  statistics (whole history, kept across restarts) instead of the last
+  import window.
+- Up to 12 invoices are archived per update (was 3).
+
 ## [0.2.2] – 2026-11-18
 
 ### Fixed

@@ -179,6 +179,9 @@ class AccountData:
     instalments: list[Instalment] = field(default_factory=list)  # by due date
     bonus_points: int | None = None
     bonus_factor: float | None = None
+    # Filled by the integration: invoices verified as saved PDFs, and signed links to them.
+    invoice_files: dict[str, str] = field(default_factory=dict)
+    invoice_links: dict[str, str] = field(default_factory=dict)
 
     @property
     def tariffs(self) -> list[Tariff]:

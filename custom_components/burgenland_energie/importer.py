@@ -12,7 +12,8 @@ from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     statistics_during_period,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util
 
@@ -36,7 +37,25 @@ class MeterStatus:
     last_run: datetime | None = None
     last_error: str | None = None
     days_written: int = 0
-    totals: dict[int, float] = field(default_factory=dict)  # year -> kWh in window
+    # From the stored statistics (whole history), not from the import window.
+    kwh_per_month: dict[str, float] = field(default_factory=dict)  # "2026-10" -> kWh
+
+    @property
+    def kwh_per_year(self) -> dict[str, float]:
+        years: dict[str, float] = {}
+        for month, kwh in self.kwh_per_month.items():
+            years[month[:4]] = round(years.get(month[:4], 0.0) + kwh, 3)
+        return dict(sorted(years.items()))
+
+
+HISTORY_START = datetime(2015, 1, 1, tzinfo=timezone.utc)
+TOTALS_DELAY_S = 15
+LAST_DAY_LOOKBACK_DAYS = 800
+
+
+def _local(start: datetime | float) -> datetime:
+    ts = start if isinstance(start, datetime) else dt_util.utc_from_timestamp(start)
+    return dt_util.as_local(ts)
 
 
 def statistic_id(tariff: Tariff) -> str:
@@ -87,6 +106,7 @@ class MeterImporter:
         self.hass = hass
         self.client = client
         self.status: dict[str, MeterStatus] = {}
+        self._totals_unsub = None
 
     async def _base_sum(self, stat_id: str, before: datetime) -> float:
         for lookback in (timedelta(days=70), timedelta(days=4000)):
@@ -134,10 +154,64 @@ class MeterImporter:
             nonzero = [d for d in days if d[1] > 0]
             if nonzero:
                 st.last_day, st.last_day_kwh = nonzero[-1]
-            st.totals = {}
-            for d, kwh in days:
-                st.totals[d.year] = round(st.totals.get(d.year, 0.0) + kwh, 3)
             st.days_written = len(rows)
             st.last_error = None
         async_dispatcher_send(self.hass, SIGNAL_METER_UPDATED)
+        self.schedule_totals(tariffs)
         return failed
+
+    # -- totals from the stored statistics (survive restarts, whole history)
+
+    @callback
+    def schedule_totals(self, tariffs: list[Tariff], delay: float = TOTALS_DELAY_S) -> None:
+        """Refresh totals once the recorder has written the new rows."""
+        if self._totals_unsub:
+            self._totals_unsub()
+
+        @callback
+        def _run(_now) -> None:
+            self._totals_unsub = None
+            self.hass.async_create_task(self.async_refresh_totals(tariffs), eager_start=False)
+
+        self._totals_unsub = async_call_later(self.hass, delay, _run)
+
+    @callback
+    def async_shutdown(self) -> None:
+        if self._totals_unsub:
+            self._totals_unsub()
+            self._totals_unsub = None
+
+    async def async_refresh_totals(self, tariffs: list[Tariff]) -> None:
+        recorder = get_instance(self.hass)
+        ids = {statistic_id(t): t.meter_id for t in tariffs}
+        if not ids:
+            return
+        try:
+            monthly = await recorder.async_add_executor_job(
+                statistics_during_period, self.hass, HISTORY_START, None, set(ids), "month", None, {"change"}
+            )
+            daily = await recorder.async_add_executor_job(
+                statistics_during_period,
+                self.hass,
+                dt_util.utcnow() - timedelta(days=LAST_DAY_LOOKBACK_DAYS),
+                None,
+                set(ids),
+                "day",
+                None,
+                {"change"},
+            )
+        except Exception as err:  # noqa: BLE001 - totals are informational
+            _LOGGER.debug("Totals from statistics failed: %s", err)
+            return
+        for stat_id, meter_id in ids.items():
+            st = self.status.setdefault(meter_id, MeterStatus())
+            months: dict[str, float] = {}
+            for row in monthly.get(stat_id) or []:
+                if row.get("change") is not None and row.get("start") is not None:
+                    months[_local(row["start"]).strftime("%Y-%m")] = round(float(row["change"]), 3)
+            st.kwh_per_month = dict(sorted(months.items()))
+            used = [r for r in daily.get(stat_id) or [] if (r.get("change") or 0) > 0 and r.get("start") is not None]
+            if used:
+                st.last_day = _local(used[-1]["start"]).date()
+                st.last_day_kwh = round(float(used[-1]["change"]), 3)
+        async_dispatcher_send(self.hass, SIGNAL_METER_UPDATED)

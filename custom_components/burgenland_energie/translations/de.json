@@ -68,7 +68,7 @@
         "name": "Nächste Teilzahlung fällig"
       },
       "letzte_rechnung": {
-        "name": "Letzte Rechnung"
+        "name": "Letzte Rechnung · Zahlbetrag"
       },
       "letzte_rechnung_am": {
         "name": "Letzte Rechnung vom"
@@ -87,6 +87,14 @@
       },
       "letzter_messtag": {
         "name": "Letzter Messtag"
+      },
+      "datenstand": {
+        "name": "Datenstand",
+        "state": {
+          "vollstaendig": "Vollständig",
+          "unvollstaendig": "Unvollständig",
+          "fehler": "Fehler"
+        }
       }
     },
     "calendar": {
@@ -103,6 +111,10 @@
         "bill_nr": {
           "name": "Rechnungsnummer",
           "description": "Leer lassen für die neueste Rechnung."
+        },
+        "all_missing": {
+          "name": "Alle fehlenden Rechnungen",
+          "description": "Speichert alle Rechnungen, die noch nicht als geprüftes PDF vorliegen (Rechnungsnummer wird ignoriert)."
         }
       }
     },

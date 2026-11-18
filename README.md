@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/musicpete/ha-burgenland-energie/actions/workflows/ci.yml/badge.svg)](https://github.com/musicpete/ha-burgenland-energie/actions/workflows/ci.yml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories/)
-![Version](https://img.shields.io/badge/version-0.2.2-blue)
+![Version](https://img.shields.io/badge/version-0.3.0-blue)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.11%2B-03A9F4)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -36,7 +36,8 @@ energy per meter into Home Assistant.
 | --- | --- |
 | Tariff per meter | Energy price gross and net (EUR/kWh), base price per month; usable as the price in the Energy dashboard |
 | Part payments | Next instalment and its due date, remaining instalments, a calendar with all due dates |
-| Invoices | Latest invoice and settlement with billing period; optional automatic PDF archive in the media folder |
+| Invoices | All invoices with the amount to pay and a link to each PDF; optional automatic PDF archive in the media folder |
+| Completeness | One sensor that checks every invoice is archived as a verified PDF, usage data is current and the last fetch worked |
 | Bonus points | Current balance of the Bonus- und Servicewelt |
 | Energy | Billed energy per meter and day as long-term statistics, with full history on demand |
 
@@ -116,13 +117,14 @@ point of delivery (Zählpunkt).
 | `sensor.burgenland_energie_naechste_teilzahlung` | EUR | Next instalment; attributes `faellig_am`, `status`, `verbleibende_teilzahlungen`, `summe_verbleibend`, `plan` |
 | `sensor.burgenland_energie_naechste_teilzahlung_am` | date | Due date of the next instalment |
 | `calendar.burgenland_energie_teilzahlungen` | calendar | All instalment due dates |
-| `sensor.burgenland_energie_letzte_rechnung` | EUR | Latest invoice; attributes `rechnungsnummer`, `datum`, `zeitraum_von`, `zeitraum_bis`, `jahresabrechnung`, `rechnungen` |
+| `sensor.burgenland_energie_letzte_rechnung` | EUR | **Amount to pay** of the latest invoice (back-payment or credit plus the first new instalment, as the portal reports it — not the invoice total); attributes `rechnungsnummer`, `datum`, `zeitraum_von`, `zeitraum_bis`, `jahresabrechnung`, `pdf`, `rechnungen` (each with `zahlbetrag` and `pdf` link) |
+| `sensor.burgenland_energie_datenstand` | enum | `vollstaendig` / `unvollstaendig` / `fehler`; attributes `rechnungen_gesamt`, `rechnungen_gespeichert`, `rechnungen_fehlend`, `pdf_archiv`, `messdaten_bis`, `messdaten_alter_tage`, `letzter_abruf`, `fehler`, `hinweise` |
 | `sensor.burgenland_energie_letzte_rechnung_am` | date | End of the billing period (settlements) or invoice date |
 | `sensor.burgenland_energie_bonuspunkte` | points | Bonus points; attribute `faktor` |
 | `sensor.burgenland_energie_<tarif>_arbeitspreis` | EUR/kWh | Energy price incl. 20 % VAT; attributes `netto`, `tarif`, `preisgarantie_bis`, `bindung_bis` |
 | `sensor.burgenland_energie_<tarif>_arbeitspreis_netto` | EUR/kWh | Energy price excl. VAT |
 | `sensor.burgenland_energie_<tarif>_grundpreis` | EUR | Base price per month incl. VAT; attributes `netto_pro_monat`, `brutto_pro_jahr` |
-| `sensor.burgenland_energie_<tarif>_letzter_messtag` | date | Latest day with billed energy; attributes `kwh`, `kwh_pro_jahr`, `fehler` |
+| `sensor.burgenland_energie_<tarif>_letzter_messtag` | date | Latest day with billed energy; attributes `kwh`, `kwh_pro_jahr`, `kwh_pro_monat` (whole history), `fehler` |
 | `burgenland_energie:<zaehler>_bezug` | statistic (kWh) | Billed energy per day |
 
 Prices are energy prices only. Grid charges (Netz Burgenland), taxes and
@@ -143,6 +145,7 @@ Saves an invoice PDF to `<media>/burgenland_energie/` and returns its path.
 | Field | Default | Description |
 | --- | --- | --- |
 | `bill_nr` | latest | Invoice number (see attribute `rechnungen`) |
+| `all_missing` | false | Save every invoice that is not yet stored as a verified PDF |
 
 ### `burgenland_energie.import_meter_data`
 
@@ -217,6 +220,12 @@ URL or file name.
 
 **Logs and errors** name the endpoint without contract, meter or customer
 numbers (e.g. `/api/contracts/…/bills`) and contain HTTP status codes only.
+
+**PDF links:** the invoice list carries one signed link per saved PDF. A
+link opens only that invoice, expires after 24 hours and is renewed on every
+update; without the signature the invoice address requires a Home Assistant
+login. The links are attributes that are not written to the database, but
+every user who can see the entity can use them while they are valid.
 
 **Permissions:** both actions are admin-only. Saved invoices can be opened by
 every Home Assistant user who can use the media browser, so keep the option

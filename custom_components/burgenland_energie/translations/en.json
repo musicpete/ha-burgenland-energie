@@ -68,7 +68,7 @@
         "name": "Next instalment due"
       },
       "letzte_rechnung": {
-        "name": "Latest invoice"
+        "name": "Latest invoice · amount due"
       },
       "letzte_rechnung_am": {
         "name": "Latest invoice date"
@@ -87,6 +87,14 @@
       },
       "letzter_messtag": {
         "name": "Latest metered day"
+      },
+      "datenstand": {
+        "name": "Data status",
+        "state": {
+          "vollstaendig": "Complete",
+          "unvollstaendig": "Incomplete",
+          "fehler": "Error"
+        }
       }
     },
     "calendar": {
@@ -103,6 +111,10 @@
         "bill_nr": {
           "name": "Invoice number",
           "description": "Leave empty for the latest invoice."
+        },
+        "all_missing": {
+          "name": "All missing invoices",
+          "description": "Save every invoice that is not stored as a verified PDF yet (ignores the invoice number)."
         }
       }
     },

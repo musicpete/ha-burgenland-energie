@@ -21,7 +21,7 @@ from homeassistant.util import dt as dt_util
 
 from . import BurgenlandEnergieConfigEntry
 from .api import AccountData, Tariff
-from .const import DOMAIN, MANUFACTURER, SIGNAL_METER_UPDATED
+from .const import CONF_SAVE_INVOICES, DOMAIN, MANUFACTURER, METER_DATA_STALE_DAYS, SIGNAL_METER_UPDATED
 from .importer import MeterImporter, statistic_id
 
 PARALLEL_UPDATES = 0
@@ -59,22 +59,26 @@ class AccountSensorDescription(SensorEntityDescription):
 
 
 def _bill_attrs(d: AccountData, _today: date) -> dict[str, Any]:
+    """The portal reports the amount to pay per invoice ("Zu zahlender Betrag":
+    back-payment or credit plus the first new instalment), not the invoice total."""
     if not d.bills:
         return {}
     b = d.bills[0]
-    annual = next((x for x in d.bills if x.is_annual), None)
     return {
         "rechnungsnummer": b.bill_nr,
         "datum": b.ref_date.isoformat(),
         "zeitraum_von": b.date_from.isoformat() if b.date_to else None,
         "zeitraum_bis": b.date_to.isoformat() if b.date_to else None,
         "jahresabrechnung": b.is_annual,
-        "letzte_jahresabrechnung_betrag": annual.amount if annual else None,
-        "letzte_jahresabrechnung_zeitraum": (
-            f"{annual.date_from.isoformat()} – {annual.date_to.isoformat()}" if annual and annual.date_to else None
-        ),
+        "pdf": d.invoice_links.get(b.bill_nr),
         "rechnungen": [
-            {"datum": x.ref_date.isoformat(), "betrag": x.amount, "nr": x.bill_nr, "jahresabrechnung": x.is_annual} for x in d.bills[:12]
+            {
+                "datum": x.ref_date.isoformat(),
+                "zahlbetrag": x.amount,
+                "nr": x.bill_nr,
+                "pdf": d.invoice_links.get(x.bill_nr),
+            }
+            for x in d.bills
         ],
     }
 
@@ -143,7 +147,7 @@ ACCOUNT_SENSORS: tuple[AccountSensorDescription, ...] = (
 class AccountSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     # Lists and invoice numbers stay out of the recorder database.
-    _unrecorded_attributes = frozenset({"rechnungen", "plan", "rechnungsnummer"})
+    _unrecorded_attributes = frozenset({"rechnungen", "plan", "rechnungsnummer", "pdf"})
     entity_description: AccountSensorDescription
 
     def __init__(self, entry: BurgenlandEnergieConfigEntry, description: AccountSensorDescription) -> None:
@@ -255,6 +259,7 @@ class TariffSensor(CoordinatorEntity, SensorEntity):
 class MeterStatusSensor(SensorEntity):
     """Latest day with billed energy for one meter, plus import status."""
 
+    _unrecorded_attributes = frozenset({"kwh_pro_monat", "kwh_pro_jahr"})
     _attr_has_entity_name = True
     _attr_translation_key = "letzter_messtag"
     _attr_device_class = SensorDeviceClass.DATE
@@ -288,13 +293,93 @@ class MeterStatusSensor(SensorEntity):
             attrs.update(
                 {
                     "kwh": st.last_day_kwh,
-                    "kwh_pro_jahr": {str(y): v for y, v in sorted(st.totals.items())},
+                    "kwh_pro_jahr": st.kwh_per_year,
+                    "kwh_pro_monat": st.kwh_per_month,
                     "letzter_lauf": st.last_run.isoformat() if st.last_run else None,
                     "geschriebene_tage": st.days_written,
                     "fehler": st.last_error,
                 }
             )
         return attrs
+
+
+class DataStatusSensor(CoordinatorEntity, SensorEntity):
+    """Is everything there? Invoices saved as PDFs, usage data current, no errors."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "datenstand"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["vollstaendig", "unvollstaendig", "fehler"]
+    _attr_icon = "mdi:database-check-outline"
+    _unrecorded_attributes = frozenset({"rechnungen_fehlend", "hinweise"})
+
+    def __init__(self, entry: BurgenlandEnergieConfigEntry) -> None:
+        super().__init__(entry.runtime_data.coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_datenstand"
+        self._attr_device_info = _account_device(entry)
+        self.entity_id = f"sensor.{DOMAIN}_datenstand"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(async_dispatcher_connect(self.hass, SIGNAL_METER_UPDATED, self.async_write_ha_state))
+
+    @property
+    def available(self) -> bool:
+        return True  # reports a failed update itself
+
+    def _evaluate(self) -> tuple[str, dict[str, Any]]:
+        coordinator = self.coordinator
+        data: AccountData | None = coordinator.data
+        archive_on = bool(self._entry.options.get(CONF_SAVE_INVOICES))
+        hints: list[str] = []
+        errors: list[str] = []
+        if not coordinator.last_update_success:
+            errors.append(f"Abruf fehlgeschlagen: {coordinator.last_exception}")
+        meters = self._entry.runtime_data.importer.status
+        for meter_id, st in meters.items():
+            if st.last_error:
+                errors.append(f"Verbrauchsdaten {meter_id}: {st.last_error}")
+        bills = data.bills if data else []
+        saved = data.invoice_files if data else {}
+        missing = [b for b in bills if b.bill_nr not in saved]
+        if not archive_on:
+            hints.append("PDF-Archiv ist ausgeschaltet (Optionen der Integration)")
+        elif missing:
+            hints.append(f"{len(missing)} von {len(bills)} Rechnungen noch nicht als PDF gespeichert")
+        last_days = [st.last_day for st in meters.values() if st.last_day]
+        data_until = min(last_days) if last_days else None
+        age = (dt_util.now().date() - data_until).days if data_until else None
+        if age is not None and age > METER_DATA_STALE_DAYS:
+            hints.append(f"Verbrauchsdaten seit {age} Tagen nicht nachgeliefert")
+        if errors:
+            state = "fehler"
+        elif hints:
+            state = "unvollstaendig"
+        else:
+            state = "vollstaendig"
+        attrs = {
+            "rechnungen_gesamt": len(bills),
+            "rechnungen_gespeichert": len([b for b in bills if b.bill_nr in saved]),
+            "rechnungen_fehlend": [{"datum": b.ref_date.isoformat(), "nr": b.bill_nr} for b in missing],
+            "pdf_archiv": archive_on,
+            "messdaten_bis": data_until.isoformat() if data_until else None,
+            "messdaten_alter_tage": age,
+            "letzter_abruf": coordinator.last_update_success_time.isoformat()
+            if getattr(coordinator, "last_update_success_time", None)
+            else None,
+            "fehler": errors,
+            "hinweise": hints,
+        }
+        return state, attrs
+
+    @property
+    def native_value(self) -> str:
+        return self._evaluate()[0]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._evaluate()[1]
 
 
 async def async_setup_entry(
@@ -304,6 +389,7 @@ async def async_setup_entry(
 ) -> None:
     rt = entry.runtime_data
     entities: list[SensorEntity] = [AccountSensor(entry, d) for d in ACCOUNT_SENSORS]
+    entities.append(DataStatusSensor(entry))
     for tariff in rt.coordinator.data.tariffs:
         entities.extend(TariffSensor(entry, tariff, d) for d in TARIFF_SENSORS)
         entities.append(MeterStatusSensor(entry, tariff, rt.importer))

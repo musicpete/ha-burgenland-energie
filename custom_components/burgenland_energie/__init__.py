@@ -10,7 +10,6 @@ folder.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -33,7 +32,7 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.event import async_call_later, async_track_time_change
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import TimestampDataUpdateCoordinator, UpdateFailed
 
 from .api import (
     AccountData,
@@ -43,6 +42,7 @@ from .api import (
     BurgenlandEnergieError,
 )
 from .const import (
+    ATTR_ALL_MISSING,
     ATTR_BILL_NR,
     ATTR_DAYS,
     CONF_METER_DAYS,
@@ -58,6 +58,7 @@ from .const import (
     SERVICE_IMPORT_METER_DATA,
     STARTUP_DELAY_S,
 )
+from . import invoices
 from .importer import MeterImporter
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,43 +69,20 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 @dataclass
 class BurgenlandEnergieRuntime:
     client: BurgenlandEnergieClient
-    coordinator: DataUpdateCoordinator[AccountData]
+    coordinator: TimestampDataUpdateCoordinator[AccountData]
     importer: MeterImporter
 
 
 type BurgenlandEnergieConfigEntry = ConfigEntry[BurgenlandEnergieRuntime]
 
 
-def invoice_dir(hass: HomeAssistant) -> Path:
-    """<media>/burgenland_energie - the "local" media source if configured."""
-    media = hass.config.media_dirs.get("local") or next(iter(hass.config.media_dirs.values()), None)
-    return Path(media or hass.config.path("media")) / INVOICE_DIR
-
-
-def invoice_filename(bill: Bill) -> str:
-    # bill_nr is validated as alphanumeric in api.parse_bills.
-    kind = "Jahresabrechnung" if bill.is_annual else "Rechnung"
-    return f"{bill.date_from.isoformat()}_{kind}_{bill.bill_nr}.pdf"
-
-
 async def async_save_invoice(
     hass: HomeAssistant, client: BurgenlandEnergieClient, bill: Bill
 ) -> Path:
     pdf = await client.async_get_bill_pdf(bill.contract_nr, bill.bill_nr)
-    folder = invoice_dir(hass)
-    path = folder / invoice_filename(bill)
-
-    def _write() -> None:
-        # Invoices are personal documents: owner-only permissions on disk.
-        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-        tmp = path.with_suffix(".part")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(pdf)
-        os.replace(tmp, path)
-
-    await hass.async_add_executor_job(_write)
-    return path
+    return await hass.async_add_executor_job(
+        invoices.write_pdf, invoices.invoice_dir(hass), invoices.invoice_filename(bill), pdf
+    )
 
 
 def _entries(hass: HomeAssistant) -> list[BurgenlandEnergieConfigEntry]:
@@ -120,6 +98,25 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def _download(call: ServiceCall) -> ServiceResponse:
         wanted = call.data.get(ATTR_BILL_NR)
+        if call.data.get(ATTR_ALL_MISSING):
+            saved: list[str] = []
+            for entry in _entries(hass):
+                rt = entry.runtime_data
+                data = rt.coordinator.data
+                if not data:
+                    continue
+                folder = invoices.invoice_dir(hass)
+                have = await hass.async_add_executor_job(invoices.verified_files, folder, data.bills)
+                for bill in [b for b in data.bills if b.bill_nr not in have]:
+                    try:
+                        saved.append((await async_save_invoice(hass, rt.client, bill)).name)
+                    except BurgenlandEnergieAuthError as err:
+                        entry.async_start_reauth(hass)
+                        raise HomeAssistantError(f"Re-authentication required: {err}") from err
+                    except (BurgenlandEnergieError, OSError) as err:
+                        raise HomeAssistantError(f"Invoice download failed: {err}") from err
+                await rt.coordinator.async_request_refresh()
+            return {"saved": saved}
         for entry in _entries(hass):
             rt = entry.runtime_data
             bills = rt.coordinator.data.bills if rt.coordinator.data else []
@@ -133,7 +130,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 raise HomeAssistantError(f"Re-authentication required: {err}") from err
             except BurgenlandEnergieError as err:
                 raise HomeAssistantError(f"Invoice download failed: {err}") from err
-            return {"path": str(path), "bill_nr": bill.bill_nr, "amount": bill.amount}
+            await rt.coordinator.async_request_refresh()
+            return {"path": str(path), "bill_nr": bill.bill_nr, "amount_due": bill.amount}
         raise HomeAssistantError("Invoice not found" if wanted else "No invoices available")
 
     async def _import(call: ServiceCall) -> None:
@@ -156,7 +154,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         DOMAIN,
         SERVICE_DOWNLOAD_INVOICE,
         _download,
-        schema=vol.Schema({vol.Optional(ATTR_BILL_NR): cv.string}),
+        schema=vol.Schema(
+            {vol.Optional(ATTR_BILL_NR): cv.string, vol.Optional(ATTR_ALL_MISSING, default=False): cv.boolean}
+        ),
         supports_response=SupportsResponse.OPTIONAL,
     )
     async_register_admin_service(
@@ -191,17 +191,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: BurgenlandEnergieConfigE
             raise ConfigEntryAuthFailed(str(err)) from err
         except BurgenlandEnergieError as err:
             raise UpdateFailed(str(err)) from err
+        folder = invoices.invoice_dir(hass)
         if entry.options.get(CONF_SAVE_INVOICES):
-            await _save_new_invoices(data)
+            await _save_new_invoices(data, folder)
+        data.invoice_files = await hass.async_add_executor_job(invoices.verified_files, folder, data.bills)
+        data.invoice_links = invoices.signed_links(hass, list(data.invoice_files))
         return data
 
-    async def _save_new_invoices(data: AccountData) -> None:
-        folder = invoice_dir(hass)
-        missing = [
-            b
-            for b in data.bills
-            if not await hass.async_add_executor_job((folder / invoice_filename(b)).exists)
-        ][:MAX_INVOICE_DOWNLOADS_PER_RUN]
+    async def _save_new_invoices(data: AccountData, folder) -> None:
+        have = await hass.async_add_executor_job(invoices.verified_files, folder, data.bills)
+        missing = [b for b in data.bills if b.bill_nr not in have][:MAX_INVOICE_DOWNLOADS_PER_RUN]
         for bill in missing:
             try:
                 path = await async_save_invoice(hass, client, bill)
@@ -212,7 +211,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BurgenlandEnergieConfigE
                 _LOGGER.warning("Cannot write invoice to %s: %s", folder, err)
                 return
 
-    coordinator: DataUpdateCoordinator[AccountData] = DataUpdateCoordinator(
+    coordinator: TimestampDataUpdateCoordinator[AccountData] = TimestampDataUpdateCoordinator(
         hass,
         _LOGGER,
         config_entry=entry,
@@ -220,6 +219,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BurgenlandEnergieConfigE
         update_method=_update,
         update_interval=timedelta(hours=POLL_INTERVAL_H),
     )
+    invoices.async_register_view(hass)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = BurgenlandEnergieRuntime(client, coordinator, importer)
 
@@ -235,6 +235,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BurgenlandEnergieConfigE
     hour, minute = METER_IMPORT_TIME
     entry.async_on_unload(async_track_time_change(hass, _run_import, hour=hour, minute=minute, second=0))
     entry.async_on_unload(async_call_later(hass, STARTUP_DELAY_S, _run_import))
+    importer.schedule_totals(coordinator.data.tariffs)
+    entry.async_on_unload(importer.async_shutdown)
     options_seen = dict(entry.options)
 
     async def _entry_updated(hass: HomeAssistant, updated: BurgenlandEnergieConfigEntry) -> None:

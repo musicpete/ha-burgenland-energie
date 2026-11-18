@@ -5,6 +5,11 @@ download_invoice:
       example: "000001789012"
       selector:
         text:
+    all_missing:
+      required: false
+      default: false
+      selector:
+        boolean:
 import_meter_data:
   fields:
     days:

@@ -95,7 +95,7 @@ class FakeClient:
 
     async def async_get_bill_pdf(self, contract_nr, bill_nr):
         self.pdf_calls.append(bill_nr)
-        return b"%PDF-1.4 test"
+        return b"%PDF-1.4\n" + b"0" * 2048  # synthetic, not a real invoice
 
 
 @pytest.fixture(autouse=True)
@@ -354,3 +354,87 @@ async def test_handover_with_rejected_token_falls_back_to_paste(recorder_mock, e
     assert nxt["type"] is FlowResultType.FORM and nxt["step_id"] == "paste"
     assert nxt["errors"] == {"base": "invalid_auth"}
     assert not hass.config_entries.async_entries(DOMAIN)
+
+
+
+async def _setup_with_media(hass, tmp_path, options=None):
+    hass.config.media_dirs = {"local": str(tmp_path)}
+    return await _setup(hass, options=options)
+
+
+async def test_datenstand_reports_missing_invoices(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna, tmp_path) -> None:
+    # Archive off: nothing is checked yet -> incomplete, with a hint.
+    entry = await _setup_with_media(hass, tmp_path)
+    st = hass.states.get("sensor.burgenland_energie_datenstand")
+    assert st.state == "unvollstaendig"
+    assert st.attributes["pdf_archiv"] is False
+    assert st.attributes["rechnungen_gesamt"] == 2 and st.attributes["rechnungen_gespeichert"] == 0
+
+    # Save all missing invoices -> complete, every invoice has a link.
+    resp = await hass.services.async_call(DOMAIN, "download_invoice", {"all_missing": True}, blocking=True, return_response=True)
+    assert len(resp["saved"]) == 2
+    hass.config_entries.async_update_entry(entry, options={CONF_SAVE_INVOICES: True})
+    await entry.runtime_data.coordinator.async_refresh()
+    await hass.async_block_till_done()
+    st = hass.states.get("sensor.burgenland_energie_datenstand")
+    assert st.state == "vollstaendig", st.attributes["hinweise"]
+    assert st.attributes["rechnungen_gespeichert"] == 2 and st.attributes["rechnungen_fehlend"] == []
+    bills = hass.states.get("sensor.burgenland_energie_letzte_rechnung").attributes["rechnungen"]
+    assert all(b["pdf"] and "authSig=" in b["pdf"] for b in bills)
+    assert "zahlbetrag" in bills[0] and "betrag" not in bills[0]
+
+    # A broken file counts as missing again.
+    broken = next((tmp_path / "burgenland_energie").iterdir())
+    broken.write_bytes(b"not a pdf")
+    await entry.runtime_data.coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.burgenland_energie_datenstand").state == "vollstaendig"  # re-saved by the archive
+    assert broken.read_bytes().startswith(b"%PDF-")
+
+
+async def test_datenstand_reports_errors(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna, tmp_path) -> None:
+    entry = await _setup_with_media(hass, tmp_path, options={CONF_SAVE_INVOICES: True})
+    FakeClient.fail_auth = False
+
+    async def boom():
+        from custom_components.burgenland_energie.api import BurgenlandEnergieError
+        raise BurgenlandEnergieError("HTTP 503 for /api/contracts")
+
+    entry.runtime_data.client.async_get_account = boom
+    await entry.runtime_data.coordinator.async_refresh()
+    await hass.async_block_till_done()
+    st = hass.states.get("sensor.burgenland_energie_datenstand")
+    assert st.state == "fehler"
+    assert "503" in st.attributes["fehler"][0]
+
+
+async def test_invoice_links_open_the_pdf(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna, tmp_path, hass_client_no_auth) -> None:
+    await _setup_with_media(hass, tmp_path, options={CONF_SAVE_INVOICES: True})
+    bills = hass.states.get("sensor.burgenland_energie_letzte_rechnung").attributes["rechnungen"]
+    client = await hass_client_no_auth()
+
+    signed = await client.get(bills[0]["pdf"])
+    assert signed.status == 200
+    assert signed.headers["Content-Type"] == "application/pdf"
+    assert (await signed.read()).startswith(b"%PDF-")
+
+    # Without the signature: unauthorized; a link for one invoice does not open another.
+    unsigned = bills[0]["pdf"].split("?")[0]
+    assert (await client.get(unsigned)).status == 401
+    other = unsigned.rsplit("/", 1)[0] + "/" + bills[1]["nr"] + "?" + bills[0]["pdf"].split("?")[1]
+    assert (await client.get(other)).status == 401
+
+
+async def test_meter_totals_from_whole_history(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna) -> None:
+    entry = await _setup(hass)
+    await hass.services.async_call(DOMAIN, "import_meter_data", {"days": 60}, blocking=True)
+    await async_wait_recording_done(hass)
+    await hass.services.async_call(DOMAIN, "import_meter_data", {"days": 3}, blocking=True)
+    await async_wait_recording_done(hass)
+    rt = entry.runtime_data
+    rt.importer.async_shutdown()
+    await rt.importer.async_refresh_totals(rt.coordinator.data.tariffs)
+    st = hass.states.get("sensor.burgenland_energie_tarif_a_letzter_messtag")
+    total = sum(st.attributes["kwh_pro_monat"].values())
+    assert total == pytest.approx(59 * 10.0)  # 60 days, yesterday not delivered yet
+    assert st.state == (dt_util.now().date() - timedelta(days=2)).isoformat()
