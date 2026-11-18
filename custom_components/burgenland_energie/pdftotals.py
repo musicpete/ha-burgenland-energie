@@ -15,13 +15,15 @@ from __future__ import annotations
 import re
 import zlib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 _STREAM = re.compile(rb"stream\r?\n")
 _TEXT_OP = re.compile(
     rb"/([^\s/\[\]()<>]+)\s+[-\d.]+\s+Tf"
-    rb"|\[((?:[^\]\\]|\\.)*)\]\s*TJ|\(((?:\\.|[^\\)])*)\)\s*Tj|<([0-9A-Fa-f\s]*)>\s*Tj",
+    # a TJ array may contain "]" inside its strings, so strings are matched as units
+    rb"|\[((?:\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>|[^\]()<])*)\]\s*TJ"
+    rb"|\(((?:\\.|[^\\)])*)\)\s*Tj|<([0-9A-Fa-f\s]*)>\s*Tj",
     re.S,
 )
 _LITERAL = re.compile(rb"\(((?:\\.|[^\\)])*)\)|<([0-9A-Fa-f\s]*)>", re.S)
@@ -51,6 +53,7 @@ class InvoiceTotals:
     subsidy: float | None  # state electricity subsidy (positive number)
     paid: float | None  # part payments made in the period
     balance: float | None  # > 0 additional payment, < 0 credit
+    billed_kwh: dict[str, float] = field(default_factory=dict)  # tariff name -> kWh
 
     @property
     def other(self) -> float | None:
@@ -77,6 +80,7 @@ class InvoiceTotals:
             "sonstiges": self.other,
             "teilbetraege": self.paid,
             "saldo": self.balance,
+            "kwh": dict(self.billed_kwh),
         }
 
 
@@ -242,6 +246,38 @@ def _find(tokens: list[str], pred: Callable[[str], bool], start: int = 0, stop: 
     return -1
 
 
+_KWH_INLINE = re.compile(r"^(?:Strom\s*·\s*)?(.+?)\s*·\s*(\d{1,3}(?:\.\d{3})*)\s*kWh$")
+_KWH_NUMBER = re.compile(r"^\d{1,3}(?:\.\d{3})*$")
+
+
+def _billed_kwh(tokens: list[str]) -> dict[str, float]:
+    """Billed kWh per tariff from the cost overview ("<tariff> <kWh> kWh Energiekosten")."""
+    out: dict[str, float] = {}
+    for i, tok in enumerate(tokens):
+        if tok != "Energiekosten" or i < 2:
+            continue
+        name = kwh = None
+        if m := _KWH_INLINE.match(tokens[i - 1]):
+            name, kwh = m.group(1), m.group(2)
+        elif tokens[i - 1] == "kWh" and _KWH_NUMBER.match(tokens[i - 2]):
+            kwh = tokens[i - 2]
+            words: list[str] = []
+            for back in tokens[max(0, i - 6) : i - 2][::-1]:
+                if not back.strip("\ufffd ·"):
+                    continue
+                if back == "Strom":  # energy type label in front of the tariff name
+                    break
+                if any(ch.isdigit() for ch in back) or back.endswith(("€", "Euro")):
+                    break
+                words.insert(0, back)
+                if len(words) == 3:
+                    break
+            name = " ".join(words) if words else None
+        if name and kwh and name not in out:
+            out[name] = float(kwh.replace(".", ""))
+    return out
+
+
 def _is_total_label(tokens: list[str], i: int) -> bool:
     tok = tokens[i]
     return tok.startswith("Ihre Gesamtkosten") or (tok == "Gesamtkosten" and i > 0 and tokens[i - 1] == "Ihre")
@@ -311,4 +347,5 @@ def parse_totals(pdf: bytes) -> InvoiceTotals | None:
         subsidy=subsidy,
         paid=paid,
         balance=balance,
+        billed_kwh=_billed_kwh(tokens),
     )

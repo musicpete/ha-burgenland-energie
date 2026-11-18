@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import BurgenlandEnergieConfigEntry
-from .api import AccountData, Tariff
+from .api import AccountData, Tariff, slugify
 from .const import CONF_SAVE_INVOICES, DOMAIN, MANUFACTURER, METER_DATA_STALE_DAYS, SIGNAL_METER_UPDATED
 from .importer import MeterImporter, statistic_id
 
@@ -91,6 +91,9 @@ def _settlements(d: AccountData) -> list[dict[str, Any]]:
         if (t := d.invoice_totals.get(bill.bill_nr)) is None:
             continue
         row = t.as_dict()
+        # billed kWh per meter, keyed like the meter entities (tariff slug)
+        row["kwh"] = {slugify(name): kwh for name, kwh in t.billed_kwh.items()}
+        row["kwh_gesamt"] = round(sum(t.billed_kwh.values()), 1) if t.billed_kwh else None
         end = t.period_to or date(bill.ref_date.year if bill.ref_date.month > 6 else bill.ref_date.year - 1, 6, 30)
         start_year = t.period_from.year if t.period_from else end.year - 1
         row["jahr"] = f"{start_year}/{end.year % 100:02d}" if start_year != end.year else str(end.year)

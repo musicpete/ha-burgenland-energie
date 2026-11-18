@@ -12,7 +12,7 @@ from datetime import date
 
 from custom_components.burgenland_energie.pdftotals import parse_totals, text_tokens
 
-_ALPHABET = sorted(set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:%+-()äöüÄÖÜß€"))
+_ALPHABET = sorted(set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,:%+-()äöüÄÖÜß€·/\ufffd"))
 # Shuffled code assignment so that the raw bytes are not readable text.
 _CODE = {ch: 0x0100 + (i * 37) % 251 for i, ch in enumerate(_ALPHABET)}
 
@@ -66,6 +66,9 @@ def _pdf(lines: list[str], fonts: list[bytes] | None = None) -> bytes:
 
 LAYOUT_A = [
     "Rechnung",
+    "Strom", "\ufffd", "Tarif", "A", "\ufffd", "1.234", "kWh", "Energiekosten",
+    "Strom", "\ufffd", "Tarif", "B", "\ufffd", "567", "kWh", "Energiekosten",
+    "Arbeitspreis", "01.07.2000 - 30.06.2001", "1.234 kWh", "1,00", "Cent/kWh", "12,34", "Energiekosten",
     "Summe exkl. USt.",
     "1.000,00",
     "+20 % USt.",
@@ -99,6 +102,9 @@ LAYOUT_A = [
 ]
 
 LAYOUT_B = [
+    "Betrag in Euro",
+    "Strom · Tarif A · 2.000 kWh",
+    "Energiekosten",
     "Ihre Gesamtkosten",
     "01.07.2001 bis 30.06.2002",
     "inkl. USt.",
@@ -134,6 +140,7 @@ def test_settlement_with_fees_and_subsidy() -> None:
     assert totals.effective == 1100.0
     assert totals.paid == 1000.0
     assert totals.balance == 100.0
+    assert totals.billed_kwh == {"Tarif A": 1234.0, "Tarif B": 567.0}
     assert totals.period_from == date(2000, 7, 1)
     assert totals.period_to == date(2001, 6, 30)
 
@@ -147,6 +154,7 @@ def test_layout_with_gross_only() -> None:
     assert totals.balance == -100.0
     assert (totals.period_from, totals.period_to) == (date(2001, 7, 1), date(2002, 6, 30))
     assert totals.as_dict()["brutto"] == 2400.0
+    assert totals.billed_kwh == {"Tarif A": 2000.0}
 
 
 def test_inconsistent_electricity_block_is_ignored() -> None:
@@ -174,3 +182,14 @@ def test_read_totals_caches_per_file(tmp_path) -> None:
     assert len(cache) == 2
     (tmp_path / "a.pdf").write_bytes(b"x")  # replaced file is parsed again
     assert read_totals(tmp_path, files, cache) == {}
+
+
+def test_tj_array_with_bracket_byte_inside_string() -> None:
+    # glyph codes may contain 0x5D (']') unescaped inside a string of a TJ array
+    cmap = _cmap({"A": 0x015D, "B": 0x0142})
+    content = b"BT\n/F1 -9 Tf\n[(\x01\x5d\x01\x42)-1(\x01\x5d)]TJ\nET\n"
+    pdf = b"%PDF-1.6\n"
+    for n, data in enumerate([cmap, content], start=1):
+        comp = zlib.compress(data)
+        pdf += f"{n} 0 obj\n<< /Length {len(comp)} >>\nstream\n".encode() + comp + b"\nendstream\nendobj\n"
+    assert text_tokens(pdf) == ["ABA"]

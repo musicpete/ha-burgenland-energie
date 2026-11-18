@@ -3,6 +3,16 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.2] – 2026-11-18
+
+### Added
+- Billed kWh per meter read from each settlement (`kwh`, keyed by tariff
+  slug, and `kwh_gesamt`), so consumption is available for every billing
+  year, also before the portal's meter data starts.
+
+### Fixed
+- Text runs containing a "]" byte inside a TJ array were skipped.
+
 ## [0.4.1] – 2026-11-18
 
 ### Fixed
