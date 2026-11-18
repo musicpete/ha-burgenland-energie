@@ -1,21 +1,34 @@
 {
   "config": {
     "step": {
+      "reauth_confirm": {
+        "title": "Portal-Sitzung erneuern",
+        "description": "Das Portal akzeptiert den gespeicherten Token nicht mehr (z. B. nach Abmelden im Portal). Melde dich erneut im Portal an und übergib die neue Sitzung.",
+        "menu_options": {
+          "handover": "Übergabe mit einem Klick (empfohlen)",
+          "paste": "Token manuell einfügen"
+        }
+      },
       "user": {
         "title": "Burgenland Energie Kundenportal",
+        "description": "Die Anmeldung im Portal ist durch ein Captcha geschützt. Du meldest dich deshalb selbst an und Home Assistant übernimmt diese Sitzung. Wie soll die Sitzung übergeben werden?",
+        "menu_options": {
+          "handover": "Übergabe mit einem Klick (empfohlen)",
+          "paste": "Token manuell einfügen"
+        }
+      },
+      "handover": {
+        "title": "Portal-Sitzung übergeben",
+        "description": "In einem neuen Tab hat sich eine Home-Assistant-Seite geöffnet. Ziehe deren Lesezeichen in die Lesezeichenleiste, melde dich auf meine.burgenlandenergie.at an und klicke dort auf das Lesezeichen. Dieser Dialog läuft danach automatisch weiter. Der Link gilt einmalig und 15 Minuten."
+      },
+      "paste": {
+        "title": "Token einfügen",
         "description": "Die Anmeldung im Portal ist durch ein Captcha geschützt. Home Assistant übernimmt deshalb eine bestehende Portal-Sitzung über deren Refresh-Token.\n\n1. Melde dich unter meine.burgenlandenergie.at an und setze den Haken **Angemeldet bleiben**.\n2. Lege ein Lesezeichen mit dieser Adresse an und klicke es auf der Portal-Seite an – der Token wird in die Zwischenablage kopiert:\n\n`{bookmarklet}`\n\n   Alternativ: Entwicklertools (F12) → Konsole → `copy(localStorage.getItem('okc-auth-refreshToken'))`\n3. Token hier einfügen.\n\nMelde dich danach im Portal nicht ab, sonst wird der Token ungültig.",
         "data": {
           "refresh_token": "Refresh-Token"
         },
         "data_description": {
           "refresh_token": "Langer Text aus dem Portal (etwa 1 900 Zeichen). Wird nur in Home Assistant gespeichert."
-        }
-      },
-      "reauth_confirm": {
-        "title": "Portal-Sitzung erneuern",
-        "description": "Der gespeicherte Token wurde vom Portal nicht mehr akzeptiert (z. B. nach Abmelden im Portal). Melde dich erneut an und kopiere den Token wie bei der Einrichtung:\n\n`{bookmarklet}`",
-        "data": {
-          "refresh_token": "Refresh-Token"
         }
       }
     },

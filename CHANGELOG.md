@@ -3,6 +3,13 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] – 2026-11-18
+
+### Added
+- One-click token handover in setup and re-authentication: sign in to the
+  portal, click a bookmark, done. The token travels in the URL fragment to a
+  single-use, 15-minute Home Assistant page; pasting remains available.
+
 ## [0.1.0] – 2026-11-18
 
 ### Added

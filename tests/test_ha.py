@@ -131,6 +131,9 @@ async def _setup(hass: HomeAssistant, options=None) -> MockConfigEntry:
 
 async def test_config_flow(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == ["handover", "paste"]
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "paste"})
     assert result["type"] is FlowResultType.FORM
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {CONF_REFRESH_TOKEN: "short"})
     assert result["errors"] == {"base": "invalid_token"}
@@ -142,6 +145,7 @@ async def test_config_flow(recorder_mock, enable_custom_integrations, hass: Home
     assert result["result"].unique_id == "000001"
 
     again = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    again = await hass.config_entries.flow.async_configure(again["flow_id"], {"next_step_id": "paste"})
     again = await hass.config_entries.flow.async_configure(again["flow_id"], {CONF_REFRESH_TOKEN: TOKEN})
     assert again["type"] is FlowResultType.ABORT and again["reason"] == "already_configured"
 
@@ -256,6 +260,7 @@ async def test_rejected_token_starts_reauth(recorder_mock, enable_custom_integra
 
     FakeClient.fail_auth = False
     flow = next(f for f in flows if f["context"]["source"] == "reauth")
+    result = await hass.config_entries.flow.async_configure(flow["flow_id"], {"next_step_id": "paste"})
     result = await hass.config_entries.flow.async_configure(flow["flow_id"], {CONF_REFRESH_TOKEN: "fresh-" + "z" * 300})
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "reauth_successful"
 
@@ -280,3 +285,71 @@ async def test_invoice_file_is_owner_only(recorder_mock, enable_custom_integrati
     import os, stat
 
     assert stat.S_IMODE(os.stat(resp["path"]).st_mode) == 0o600
+
+
+async def _start_handover(hass):
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "handover"})
+    assert result["type"] is FlowResultType.EXTERNAL_STEP
+    assert result["url"].startswith("/api/burgenland_energie/handover/")
+    return result
+
+
+async def test_one_click_handover_creates_entry(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna, hass_client_no_auth) -> None:
+    result = await _start_handover(hass)
+    client = await hass_client_no_auth()
+
+    page = await client.get(result["url"])
+    assert page.status == 200
+    text = await page.text()
+    assert "Token an Home Assistant" in text and "meine.burgenlandenergie.at" in text
+    assert page.headers["Cache-Control"] == "no-store"
+    assert page.headers["Referrer-Policy"] == "no-referrer"
+    assert "script-src 'nonce-" in page.headers["Content-Security-Policy"]
+
+    resp = await client.post(result["url"], json={"token": TOKEN})
+    assert resp.status == 200
+    # The frontend continues the flow after the external step, as with OAuth.
+    done = await hass.config_entries.flow.async_configure(result["flow_id"])
+    assert done["type"] is FlowResultType.CREATE_ENTRY
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1 and entries[0].unique_id == "000001"
+    assert entries[0].data[CONF_REFRESH_TOKEN] in (TOKEN, NEW_TOKEN)
+
+    # Single use: the link is dead afterwards.
+    again = await client.post(result["url"], json={"token": TOKEN})
+    assert again.status == 404
+    assert "abgelaufen" in await (await client.get(result["url"])).text()
+
+
+async def test_handover_rejects_bad_input(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna, hass_client_no_auth) -> None:
+    result = await _start_handover(hass)
+    client = await hass_client_no_auth()
+
+    assert (await client.post("/api/burgenland_energie/handover/wrong-secret", json={"token": TOKEN})).status == 404
+    assert (await client.post(result["url"], json={"token": "short"})).status == 400
+    assert (await client.post(result["url"], json={"token": "x" * 200 + " y"})).status == 400
+    assert (await client.post(result["url"], data="not json")).status == 400
+    # Bad input does not consume the link; a valid token still works.
+    assert (await client.post(result["url"], json={"token": TOKEN})).status == 200
+
+
+async def test_handover_link_expires(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna, hass_client_no_auth) -> None:
+    from custom_components.burgenland_energie import handover
+
+    result = await _start_handover(hass)
+    client = await hass_client_no_auth()
+    real = handover.time.monotonic
+    with patch.object(handover.time, "monotonic", lambda: real() + handover.TTL_S + 1):
+        assert (await client.post(result["url"], json={"token": TOKEN})).status == 404
+
+
+async def test_handover_with_rejected_token_falls_back_to_paste(recorder_mock, enable_custom_integrations, hass: HomeAssistant, vienna, hass_client_no_auth) -> None:
+    result = await _start_handover(hass)
+    client = await hass_client_no_auth()
+    assert (await client.post(result["url"], json={"token": "bad" + "x" * 200})).status == 200
+    nxt = await hass.config_entries.flow.async_configure(result["flow_id"])
+    assert nxt["type"] is FlowResultType.FORM and nxt["step_id"] == "paste"
+    assert nxt["errors"] == {"base": "invalid_auth"}
+    assert not hass.config_entries.async_entries(DOMAIN)

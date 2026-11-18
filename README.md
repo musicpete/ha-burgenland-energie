@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/musicpete/ha-burgenland-energie/actions/workflows/ci.yml/badge.svg)](https://github.com/musicpete/ha-burgenland-energie/actions/workflows/ci.yml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories/)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+![Version](https://img.shields.io/badge/version-0.2.0-blue)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.11%2B-03A9F4)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -68,25 +68,33 @@ Copy `custom_components/burgenland_energie` to
 ## Configuration
 
 The portal login is protected by a captcha, so Home Assistant cannot sign in
-with your password. Instead it takes over an existing portal session once,
-via the session's **refresh token**, and renews it from then on by itself.
+with your password. You sign in yourself, and Home Assistant takes over that
+session once via its **refresh token** and renews it from then on by itself.
 
-1. Sign in at [meine.burgenlandenergie.at](https://meine.burgenlandenergie.at)
-   and tick **Angemeldet bleiben**.
-2. Copy the token, either
-   - with a bookmark whose address is
-     ```
-     javascript:navigator.clipboard.writeText(localStorage.getItem('okc-auth-refreshToken')||'').then(()=>alert('Token kopiert'))
-     ```
-     clicked while the portal page is open, or
-   - in the browser's developer tools (F12) → Console:
-     `copy(localStorage.getItem('okc-auth-refreshToken'))`
-3. Settings → Devices & services → **Add integration** →
-   **Burgenland Energie (Kundenportal)** → paste the token.
+Settings → Devices & services → **Add integration** →
+**Burgenland Energie (Kundenportal)**, then choose one of two ways:
+
+**One-click handover (recommended)**
+
+1. Choose *One-click handover*. A Home Assistant page opens in a new tab.
+2. Drag its **Token an Home Assistant** button to your bookmarks bar.
+3. Sign in at [meine.burgenlandenergie.at](https://meine.burgenlandenergie.at),
+   tick **Angemeldet bleiben**, and click the bookmark there.
+4. A Home Assistant tab confirms the handover; the setup dialog continues by
+   itself.
+
+The page's link works once and for 15 minutes. Use the browser you use for
+Home Assistant; it must be able to open your Home Assistant address.
+
+**Paste the token manually**
+
+Choose *Paste the token manually*, then copy the token in the signed-in
+portal tab via developer tools (F12) → Console:
+`copy(localStorage.getItem('okc-auth-refreshToken'))`, and paste it.
 
 Afterwards you can close the browser, but **do not sign out of the portal**
-(*Abmelden*): signing out revokes the token, and Home Assistant asks for a new
-one. When that happens a repair notification appears; repeat steps 1–2.
+(*Abmelden*): signing out revokes the token. Home Assistant then shows a
+repair notification; re-authenticate the same way.
 
 **Options** (Configure on the integration):
 
@@ -182,6 +190,15 @@ entities:
 Invoice numbers and the invoice/instalment lists are attributes that are
 **not** written to the recorder database.
 
+**How the token reaches Home Assistant (one-click handover)**
+
+- The bookmark runs only on `meine.burgenlandenergie.at` and opens your Home
+  Assistant page with the token in the URL fragment (`#…`). Browsers never
+  send the fragment to a server, so the token does not appear in access logs.
+- That page posts the token once to Home Assistant. The page link contains a
+  random 256-bit secret, is single-use and expires after 15 minutes; the page
+  sends no referrer, is never cached and allows only its own script.
+
 **What is sent where**
 
 - Only to `api.meine.burgenlandenergie.at` over HTTPS with certificate
@@ -221,6 +238,8 @@ Report security issues as described in [SECURITY.md](SECURITY.md).
 
 ## How it works
 
+- **Handover:** `custom_components/burgenland_energie/handover.py` (config flow
+  external step + one-time view at `/api/burgenland_energie/handover/<secret>`).
 - **Auth:** `POST /papi/auth/signin/refresh` with the refresh token returns a
   one-hour id token (AWS Cognito). API calls send it as raw `Authorization`
   header. A renewed refresh token returned by the portal is stored.

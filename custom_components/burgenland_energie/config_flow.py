@@ -27,6 +27,7 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
+from . import handover
 from .api import (
     BurgenlandEnergieAuthError,
     BurgenlandEnergieClient,
@@ -84,53 +85,85 @@ class BurgenlandEnergieConfigFlow(ConfigFlow, domain=DOMAIN):
             return None, "unknown"
         return client, None
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            client, error = await self._validate(user_input[CONF_REFRESH_TOKEN])
-            if client:
-                await self.async_set_unique_id(client.customer_nr, raise_on_progress=False)
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title="Burgenland Energie",
-                    data={
-                        CONF_REFRESH_TOKEN: client.refresh_token,
-                        CONF_CUSTOMER_NR: client.customer_nr,
-                    },
-                )
-            errors["base"] = error or "unknown"
-        return self.async_show_form(
-            step_id="user",
-            data_schema=TOKEN_SCHEMA,
-            errors=errors,
-            description_placeholders={"bookmarklet": BOOKMARKLET},
+    _reauth: bool = False
+    _handover_token: str | None = None
+
+    async def _finish(self, client: BurgenlandEnergieClient) -> ConfigFlowResult | str:
+        """Create or update the entry; returns an error key if not possible."""
+        if self._reauth:
+            entry = self._get_reauth_entry()
+            if client.customer_nr != entry.unique_id:
+                return "wrong_account"
+            return self.async_update_reload_and_abort(
+                entry, data={**entry.data, CONF_REFRESH_TOKEN: client.refresh_token}
+            )
+        await self.async_set_unique_id(client.customer_nr, raise_on_progress=False)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title="Burgenland Energie",
+            data={CONF_REFRESH_TOKEN: client.refresh_token, CONF_CUSTOMER_NR: client.customer_nr},
         )
+
+    # -- entry points: a menu with both ways of handing over the token
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="user", menu_options=["handover", "paste"])
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+        self._reauth = True
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return self.async_show_menu(step_id="reauth_confirm", menu_options=["handover", "paste"])
+
+    # -- one-click handover (bookmarklet -> one-time Home Assistant page)
+
+    async def async_step_handover(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is None:
+            url = handover.async_create(self.hass, self.flow_id)
+            return self.async_external_step(step_id="handover", url=url)
+        # Called by the handover view with the token.
+        self._handover_token = user_input[CONF_REFRESH_TOKEN]
+        return self.async_external_step_done(next_step_id="handover_done")
+
+    async def async_step_handover_done(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        token, self._handover_token = self._handover_token or "", None
+        client, error = await self._validate(token)
+        if client:
+            result = await self._finish(client)
+            if not isinstance(result, str):
+                return result
+            error = result
+        # Fall back to pasting, with the reason shown.
+        return self.async_show_form(
+            step_id="paste",
+            data_schema=TOKEN_SCHEMA,
+            errors={"base": error or "unknown"},
+            description_placeholders={"bookmarklet": BOOKMARKLET},
+        )
+
+    # -- paste the token manually
+
+    async def async_step_paste(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-        entry = self._get_reauth_entry()
         if user_input is not None:
             client, error = await self._validate(user_input[CONF_REFRESH_TOKEN])
             if client:
-                if client.customer_nr != entry.unique_id:
-                    errors["base"] = "wrong_account"
-                else:
-                    return self.async_update_reload_and_abort(
-                        entry, data={**entry.data, CONF_REFRESH_TOKEN: client.refresh_token}
-                    )
-            else:
-                errors["base"] = error or "unknown"
+                result = await self._finish(client)
+                if not isinstance(result, str):
+                    return result
+                error = result
+            errors["base"] = error or "unknown"
         return self.async_show_form(
-            step_id="reauth_confirm",
+            step_id="paste",
             data_schema=TOKEN_SCHEMA,
             errors=errors,
             description_placeholders={"bookmarklet": BOOKMARKLET},
         )
+
+    @callback
+    def async_remove(self) -> None:
+        handover.async_discard(self.hass, self.flow_id)
 
     @staticmethod
     @callback
