@@ -70,6 +70,9 @@
       "letzte_rechnung": {
         "name": "Latest invoice · amount due"
       },
+      "abrechnung_gesamtkosten": {
+        "name": "Settlement · total cost"
+      },
       "letzte_rechnung_am": {
         "name": "Latest invoice date"
       },

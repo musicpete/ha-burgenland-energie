@@ -70,6 +70,9 @@
       "letzte_rechnung": {
         "name": "Letzte Rechnung · Zahlbetrag"
       },
+      "abrechnung_gesamtkosten": {
+        "name": "Abrechnung · Gesamtkosten"
+      },
       "letzte_rechnung_am": {
         "name": "Letzte Rechnung vom"
       },

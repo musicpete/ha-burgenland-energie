@@ -3,6 +3,18 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] – 2026-11-18
+
+### Added
+- Settlement totals read from the saved invoice PDFs (net, VAT, gross,
+  paid part payments, balance and billing period). Dependency-free reader
+  using the PDFs' own text mapping; each file is parsed once and nothing
+  is stored besides the numbers.
+- `sensor.burgenland_energie_abrechnung_gesamtkosten`: gross cost of the
+  latest settlement, all settlements in the `abrechnungen` attribute.
+- `gesamtbetrag` per entry in the invoice list; `rechnungen_ausgewertet` in
+  the data status sensor.
+
 ## [0.3.0] – 2026-11-18
 
 ### Added

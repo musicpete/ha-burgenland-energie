@@ -75,11 +75,49 @@ def _bill_attrs(d: AccountData, _today: date) -> dict[str, Any]:
             {
                 "datum": x.ref_date.isoformat(),
                 "zahlbetrag": x.amount,
+                "gesamtbetrag": t.gross if (t := d.invoice_totals.get(x.bill_nr)) else None,
                 "nr": x.bill_nr,
                 "pdf": d.invoice_links.get(x.bill_nr),
             }
             for x in d.bills
         ],
+    }
+
+
+def _settlements(d: AccountData) -> list[dict[str, Any]]:
+    """Settlement totals read from the invoice PDFs, oldest first."""
+    rows = []
+    for bill in d.bills:
+        if (t := d.invoice_totals.get(bill.bill_nr)) is None:
+            continue
+        row = t.as_dict()
+        end = t.period_to or date(bill.ref_date.year if bill.ref_date.month > 6 else bill.ref_date.year - 1, 6, 30)
+        start_year = t.period_from.year if t.period_from else end.year - 1
+        row["jahr"] = f"{start_year}/{end.year % 100:02d}" if start_year != end.year else str(end.year)
+        row["datum"] = bill.ref_date.isoformat()
+        row["nr"] = bill.bill_nr
+        row["pdf"] = d.invoice_links.get(bill.bill_nr)
+        row["_end"] = end
+        rows.append(row)
+    rows.sort(key=lambda r: r.pop("_end"))
+    return rows
+
+
+def _settlement_attrs(d: AccountData, _today: date) -> dict[str, Any]:
+    rows = _settlements(d)
+    if not rows:
+        return {}
+    last = rows[-1]
+    return {
+        "jahr": last["jahr"],
+        "zeitraum_von": last["von"],
+        "zeitraum_bis": last["bis"],
+        "netto": last["netto"],
+        "ust": last["ust"],
+        "teilbetraege": last["teilbetraege"],
+        "saldo": last["saldo"],
+        "pdf": last["pdf"],
+        "abrechnungen": rows,
     }
 
 
@@ -127,6 +165,16 @@ ACCOUNT_SENSORS: tuple[AccountSensorDescription, ...] = (
         attrs=_bill_attrs,
     ),
     AccountSensorDescription(
+        key="abrechnung_gesamtkosten",
+        translation_key="abrechnung_gesamtkosten",
+        device_class=SensorDeviceClass.MONETARY,
+        native_unit_of_measurement="EUR",
+        suggested_display_precision=2,
+        icon="mdi:receipt-text-outline",
+        value=lambda d, _t: (rows[-1]["brutto"] if (rows := _settlements(d)) else None),
+        attrs=_settlement_attrs,
+    ),
+    AccountSensorDescription(
         key="letzte_rechnung_am",
         translation_key="letzte_rechnung_am",
         device_class=SensorDeviceClass.DATE,
@@ -147,7 +195,7 @@ ACCOUNT_SENSORS: tuple[AccountSensorDescription, ...] = (
 class AccountSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     # Lists and invoice numbers stay out of the recorder database.
-    _unrecorded_attributes = frozenset({"rechnungen", "plan", "rechnungsnummer", "pdf"})
+    _unrecorded_attributes = frozenset({"rechnungen", "plan", "rechnungsnummer", "pdf", "abrechnungen"})
     entity_description: AccountSensorDescription
 
     def __init__(self, entry: BurgenlandEnergieConfigEntry, description: AccountSensorDescription) -> None:
@@ -347,6 +395,7 @@ class DataStatusSensor(CoordinatorEntity, SensorEntity):
             hints.append("PDF-Archiv ist ausgeschaltet (Optionen der Integration)")
         elif missing:
             hints.append(f"{len(missing)} von {len(bills)} Rechnungen noch nicht als PDF gespeichert")
+        totals = data.invoice_totals if data else {}
         last_days = [st.last_day for st in meters.values() if st.last_day]
         data_until = min(last_days) if last_days else None
         age = (dt_util.now().date() - data_until).days if data_until else None
@@ -361,6 +410,8 @@ class DataStatusSensor(CoordinatorEntity, SensorEntity):
         attrs = {
             "rechnungen_gesamt": len(bills),
             "rechnungen_gespeichert": len([b for b in bills if b.bill_nr in saved]),
+            # informational: not every invoice is a settlement with a cost summary
+            "rechnungen_ausgewertet": len([b for b in bills if b.bill_nr in totals]),
             "rechnungen_fehlend": [{"datum": b.ref_date.isoformat(), "nr": b.bill_nr} for b in missing],
             "pdf_archiv": archive_on,
             "messdaten_bis": data_until.isoformat() if data_until else None,

@@ -182,6 +182,8 @@ class AccountData:
     # Filled by the integration: invoices verified as saved PDFs, and signed links to them.
     invoice_files: dict[str, str] = field(default_factory=dict)
     invoice_links: dict[str, str] = field(default_factory=dict)
+    # Settlement totals read from the saved PDFs (bill_nr -> InvoiceTotals).
+    invoice_totals: dict[str, Any] = field(default_factory=dict)
 
     @property
     def tariffs(self) -> list[Tariff]:

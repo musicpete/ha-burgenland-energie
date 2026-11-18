@@ -117,7 +117,8 @@ point of delivery (Zählpunkt).
 | `sensor.burgenland_energie_naechste_teilzahlung` | EUR | Next instalment; attributes `faellig_am`, `status`, `verbleibende_teilzahlungen`, `summe_verbleibend`, `plan` |
 | `sensor.burgenland_energie_naechste_teilzahlung_am` | date | Due date of the next instalment |
 | `calendar.burgenland_energie_teilzahlungen` | calendar | All instalment due dates |
-| `sensor.burgenland_energie_letzte_rechnung` | EUR | **Amount to pay** of the latest invoice (back-payment or credit plus the first new instalment, as the portal reports it — not the invoice total); attributes `rechnungsnummer`, `datum`, `zeitraum_von`, `zeitraum_bis`, `jahresabrechnung`, `pdf`, `rechnungen` (each with `zahlbetrag` and `pdf` link) |
+| `sensor.burgenland_energie_letzte_rechnung` | EUR | **Amount to pay** of the latest invoice (back-payment or credit plus the first new instalment, as the portal reports it — not the invoice total); attributes `rechnungsnummer`, `datum`, `zeitraum_von`, `zeitraum_bis`, `jahresabrechnung`, `pdf`, `rechnungen` (each with `zahlbetrag`, `gesamtbetrag` and `pdf` link) |
+| `sensor.burgenland_energie_abrechnung_gesamtkosten` | EUR | **Total cost incl. VAT** of the latest settlement, read from the saved PDF (needs the PDF archive option); attributes `jahr`, `zeitraum_von`, `zeitraum_bis`, `netto`, `ust`, `teilbetraege`, `saldo`, `pdf`, `abrechnungen` (all settlements, oldest first) |
 | `sensor.burgenland_energie_datenstand` | enum | `vollstaendig` / `unvollstaendig` / `fehler`; attributes `rechnungen_gesamt`, `rechnungen_gespeichert`, `rechnungen_fehlend`, `pdf_archiv`, `messdaten_bis`, `messdaten_alter_tage`, `letzter_abruf`, `fehler`, `hinweise` |
 | `sensor.burgenland_energie_letzte_rechnung_am` | date | End of the billing period (settlements) or invoice date |
 | `sensor.burgenland_energie_bonuspunkte` | points | Bonus points; attribute `faktor` |

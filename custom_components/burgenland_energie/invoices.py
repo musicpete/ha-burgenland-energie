@@ -19,6 +19,7 @@ from homeassistant.components.http.auth import async_sign_path
 from homeassistant.core import HomeAssistant, callback
 
 from .api import Bill, valid_id
+from .pdftotals import InvoiceTotals, parse_totals
 from .const import DOMAIN, INVOICE_DIR
 
 INVOICE_PATH = f"/api/{DOMAIN}/invoice"
@@ -62,6 +63,29 @@ def write_pdf(folder: Path, name: str, pdf: bytes) -> Path:
         fh.write(pdf)
     os.replace(tmp, path)
     return path
+
+
+def read_totals(
+    folder: Path, files: dict[str, str], cache: dict[tuple[str, int, int], InvoiceTotals | None]
+) -> dict[str, InvoiceTotals]:
+    """bill_nr -> settlement totals of every saved PDF that has a summary (blocking).
+
+    Results are cached per file name, size and modification time, so each PDF
+    is parsed once.
+    """
+    out: dict[str, InvoiceTotals] = {}
+    for nr, name in files.items():
+        path = folder / name
+        try:
+            st = path.stat()
+            key = (name, st.st_size, st.st_mtime_ns)
+            if key not in cache:
+                cache[key] = parse_totals(path.read_bytes())
+        except OSError:
+            continue
+        if (totals := cache[key]) is not None:
+            out[nr] = totals
+    return out
 
 
 @callback

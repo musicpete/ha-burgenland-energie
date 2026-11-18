@@ -184,6 +184,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BurgenlandEnergieConfigE
     )
     importer = MeterImporter(hass, client)
 
+    totals_cache: dict = {}
+
     async def _update() -> AccountData:
         try:
             data = await client.async_get_account()
@@ -196,6 +198,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BurgenlandEnergieConfigE
             await _save_new_invoices(data, folder)
         data.invoice_files = await hass.async_add_executor_job(invoices.verified_files, folder, data.bills)
         data.invoice_links = invoices.signed_links(hass, list(data.invoice_files))
+        data.invoice_totals = await hass.async_add_executor_job(
+            invoices.read_totals, folder, data.invoice_files, totals_cache
+        )
         return data
 
     async def _save_new_invoices(data: AccountData, folder) -> None:
