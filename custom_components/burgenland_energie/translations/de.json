@@ -19,7 +19,7 @@
       },
       "handover": {
         "title": "Portal-Sitzung übergeben",
-        "description": "Falls sich kein Tab geöffnet hat (Pop-up blockiert): **[Übergabeseite öffnen]({url})**.\n\nZiehe dort das Lesezeichen in die Lesezeichenleiste, melde dich auf meine.burgenlandenergie.at an und klicke dort auf das Lesezeichen. Dieser Dialog läuft danach automatisch weiter. Der Link gilt einmalig und 15 Minuten."
+        "description": "Falls sich kein Tab geöffnet hat (Pop-up blockiert): **[Übergabeseite]({url})** mit **Strg+Klick** (Mac: Cmd+Klick) in einem neuen Tab öffnen. Ein normaler Klick wird von Home Assistant abgefangen und schließt diesen Dialog.\n\nZiehe dort das Lesezeichen in die Lesezeichenleiste, melde dich auf meine.burgenlandenergie.at an und klicke dort auf das Lesezeichen. **Lass diesen Dialog offen** – er läuft danach automatisch weiter. Der Link gilt einmalig und 15 Minuten."
       },
       "paste": {
         "title": "Token einfügen",

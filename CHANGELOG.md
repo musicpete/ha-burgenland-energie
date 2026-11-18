@@ -3,6 +3,12 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.2] – 2026-11-18
+
+### Fixed
+- Handover dialog: explains to open the link with Ctrl/Cmd+click, because a
+  plain click is handled by the Home Assistant frontend and closes the dialog.
+
 ## [0.2.1] – 2026-11-18
 
 ### Fixed

@@ -19,7 +19,7 @@
       },
       "handover": {
         "title": "Hand over the portal session",
-        "description": "If no tab opened (pop-up blocked): **[open the handover page]({url})**.\n\nOn that page, drag the bookmark to your bookmarks bar, sign in at meine.burgenlandenergie.at and click the bookmark there. This dialog continues automatically. The link works once and for 15 minutes."
+        "description": "If no tab opened (pop-up blocked): **Ctrl+click** (Mac: Cmd+click) **[the handover page]({url})** to open it in a new tab. A plain click is caught by Home Assistant and closes this dialog.\n\nOn that page, drag the bookmark to your bookmarks bar, sign in at meine.burgenlandenergie.at and click the bookmark there. **Keep this dialog open** — it continues automatically. The link works once and for 15 minutes."
       },
       "paste": {
         "title": "Paste the token",

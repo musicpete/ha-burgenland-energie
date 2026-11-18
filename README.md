@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/musicpete/ha-burgenland-energie/actions/workflows/ci.yml/badge.svg)](https://github.com/musicpete/ha-burgenland-energie/actions/workflows/ci.yml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories/)
-![Version](https://img.shields.io/badge/version-0.2.1-blue)
+![Version](https://img.shields.io/badge/version-0.2.2-blue)
 ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.11%2B-03A9F4)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -77,7 +77,8 @@ Settings → Devices & services → **Add integration** →
 **One-click handover (recommended)**
 
 1. Choose *One-click handover*. A Home Assistant page opens in a new tab
-   (if your browser blocks it as a pop-up, use the link in the dialog).
+   If your browser blocks it as a pop-up, open the link in the dialog with
+   **Ctrl+click** (Mac: Cmd+click) and keep the dialog open.
 2. Drag its **Token an Home Assistant** button to your bookmarks bar.
 3. Sign in at [meine.burgenlandenergie.at](https://meine.burgenlandenergie.at),
    tick **Angemeldet bleiben**, and click the bookmark there.
