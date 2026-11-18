@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] – 2026-11-18
+
+### Fixed
+- Invoice reader: the text mapping is now chosen per font, so amounts in
+  older invoices are no longer misread.
+- The settlement total is the invoice's overall total ("Ihre Gesamtkosten"),
+  which includes fees besides electricity.
+
+### Added
+- Per settlement: electricity cost (net, VAT, gross), other charges, state
+  subsidy and the effective cost after the subsidy (`zuschuss`, `kosten`,
+  `strom_netto`, `strom_ust`, `strom_brutto`, `sonstiges`).
+
 ## [0.4.0] – 2026-11-18
 
 ### Added

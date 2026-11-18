@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import re
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 
 _STREAM = re.compile(rb"stream\r?\n")
 _TEXT_OP = re.compile(
-    rb"\[((?:[^\]\\]|\\.)*)\]\s*TJ|\(((?:\\.|[^\\)])*)\)\s*Tj|<([0-9A-Fa-f\s]*)>\s*Tj", re.S
+    rb"/([^\s/\[\]()<>]+)\s+[-\d.]+\s+Tf"
+    rb"|\[((?:[^\]\\]|\\.)*)\]\s*TJ|\(((?:\\.|[^\\)])*)\)\s*Tj|<([0-9A-Fa-f\s]*)>\s*Tj",
+    re.S,
 )
 _LITERAL = re.compile(rb"\(((?:\\.|[^\\)])*)\)|<([0-9A-Fa-f\s]*)>", re.S)
 _ESCAPE = re.compile(rb"\\([0-7]{1,3}|.)", re.S)
@@ -28,32 +31,56 @@ _HEX = re.compile(rb"<([0-9A-Fa-f]+)>")
 _AMOUNT = re.compile(r"^-?\d{1,3}(?:\.\d{3})*,\d{2}$")
 _DATE = re.compile(r"(\d{2})\.(\d{2})\.(\d{4})")
 _GOOD = re.compile(r"[A-Za-z0-9 .,%€äöüÄÖÜß+\-]")
+_WORD = re.compile(r"^[A-ZÄÖÜ]?[a-zäöüß]{3,}$")
 
 MAX_STREAM = 8 * 1024 * 1024
+
+CMap = tuple[dict[int, str], int]
 
 
 @dataclass(frozen=True, slots=True)
 class InvoiceTotals:
-    """Settlement summary of one invoice, amounts in EUR."""
+    """Settlement summary of one invoice, amounts in EUR incl. VAT unless noted."""
 
     period_from: date | None
     period_to: date | None
-    gross: float
-    net: float | None
-    vat: float | None
-    paid: float | None
+    total: float  # "Ihre Gesamtkosten": everything charged for the period
+    energy_net: float | None  # electricity cost excl. VAT
+    energy_vat: float | None
+    energy_gross: float | None  # electricity cost incl. VAT
+    subsidy: float | None  # state electricity subsidy (positive number)
+    paid: float | None  # part payments made in the period
     balance: float | None  # > 0 additional payment, < 0 credit
+
+    @property
+    def other(self) -> float | None:
+        """Charges besides electricity (fees, dunning costs, interest)."""
+        if self.energy_gross is None:
+            return None
+        return round(self.total - self.energy_gross, 2)
+
+    @property
+    def effective(self) -> float:
+        """What the period really cost: total minus subsidy."""
+        return round(self.total - (self.subsidy or 0.0), 2)
 
     def as_dict(self) -> dict:
         return {
             "von": self.period_from.isoformat() if self.period_from else None,
             "bis": self.period_to.isoformat() if self.period_to else None,
-            "brutto": self.gross,
-            "netto": self.net,
-            "ust": self.vat,
+            "brutto": self.total,
+            "zuschuss": self.subsidy,
+            "kosten": self.effective,
+            "strom_netto": self.energy_net,
+            "strom_ust": self.energy_vat,
+            "strom_brutto": self.energy_gross,
+            "sonstiges": self.other,
             "teilbetraege": self.paid,
             "saldo": self.balance,
         }
+
+
+# --------------------------------------------------------------- PDF to text
 
 
 def _streams(pdf: bytes) -> list[bytes]:
@@ -76,7 +103,7 @@ def _streams(pdf: bytes) -> list[bytes]:
     return out
 
 
-def _parse_cmap(data: bytes) -> tuple[dict[int, str], int]:
+def _parse_cmap(data: bytes) -> CMap:
     """ToUnicode CMap -> (code -> text, code width in bytes)."""
     mapping: dict[int, str] = {}
     width = 1
@@ -113,46 +140,72 @@ def _unescape(raw: bytes) -> bytes:
     return _ESCAPE.sub(rep, raw)
 
 
-def _decode(codes: bytes, cmaps: list[tuple[dict[int, str], int]]) -> str:
-    """Pick the CMap that turns the codes into the most plausible text."""
-    best, score = "", -(10**9)
-    for mapping, width in cmaps:
-        chars = []
-        for i in range(0, len(codes) - width + 1, width):
-            chars.append(mapping.get(int.from_bytes(codes[i : i + width], "big"), "�"))
-        text = "".join(chars)
-        sc = len(_GOOD.findall(text)) - 3 * text.count("�")
-        if sc > score:
-            best, score = text, sc
-    if not cmaps:
-        best = codes.decode("latin-1")
-    return best.strip()
+def _hex(raw: bytes) -> bytes:
+    digits = re.sub(rb"\s", b"", raw)
+    if len(digits) % 2:
+        digits += b"0"
+    return bytes.fromhex(digits.decode())
+
+
+def _codes(m: re.Match[bytes]) -> bytes:
+    if m.group(2) is not None:
+        parts = []
+        for lit in _LITERAL.finditer(m.group(2)):
+            parts.append(_unescape(lit.group(1)) if lit.group(1) is not None else _hex(lit.group(2)))
+        return b"".join(parts)
+    if m.group(3) is not None:
+        return _unescape(m.group(3))
+    return _hex(m.group(4))
+
+
+def _apply(codes: bytes, cmap: CMap) -> str:
+    mapping, width = cmap
+    return "".join(
+        mapping.get(int.from_bytes(codes[i : i + width], "big"), "�")
+        for i in range(0, len(codes) - width + 1, width)
+    ).strip()
+
+
+def _score(text: str) -> int:
+    sc = len(_GOOD.findall(text)) - 3 * text.count("�")
+    if _AMOUNT.match(text) or _DATE.search(text):
+        sc += 10
+    return sc + 3 * sum(1 for w in text.split(" ") if _WORD.match(w))
 
 
 def text_tokens(pdf: bytes) -> list[str]:
-    """Text runs of all pages in content-stream order."""
+    """Text runs of all pages in content-stream order.
+
+    Glyph codes only make sense through the font's own ToUnicode CMap. The
+    CMap is chosen per content stream and font: the one that turns all runs
+    of that font into the most plausible text wins. Choosing per run instead
+    lets digits of one font be read through another font's CMap.
+    """
     streams = _streams(pdf)
     cmaps = [_parse_cmap(s) for s in streams if b"beginbfchar" in s or b"beginbfrange" in s]
     tokens: list[str] = []
     for data in streams:
         if b"BT" not in data or (b"Tj" not in data and b"TJ" not in data):
             continue
+        runs: list[tuple[bytes, bytes]] = []
+        font = b""
         for m in _TEXT_OP.finditer(data):
             if m.group(1) is not None:
-                parts = []
-                for lit in _LITERAL.finditer(m.group(1)):
-                    if lit.group(1) is not None:
-                        parts.append(_unescape(lit.group(1)))
-                    else:
-                        parts.append(bytes.fromhex(re.sub(rb"\s", b"", lit.group(2)).decode() or ""))
-                codes = b"".join(parts)
-            elif m.group(2) is not None:
-                codes = _unescape(m.group(2))
+                font = m.group(1)
             else:
-                codes = bytes.fromhex(re.sub(rb"\s", b"", m.group(3)).decode() or "")
-            if text := _decode(codes, cmaps):
-                tokens.append(text)
+                runs.append((font, _codes(m)))
+        if not cmaps:
+            tokens.extend(t for _, c in runs if (t := c.decode("latin-1").strip()))
+            continue
+        pick: dict[bytes, CMap] = {}
+        for f in {f for f, _ in runs}:
+            own = [c for ff, c in runs if ff == f]
+            pick[f] = max(cmaps, key=lambda cm, own=own: sum(_score(_apply(c, cm)) for c in own))
+        tokens.extend(t for f, c in runs if (t := _apply(c, pick[f])))
     return tokens
+
+
+# ------------------------------------------------------------ text to totals
 
 
 def _amount(tok: str) -> float | None:
@@ -162,14 +215,14 @@ def _amount(tok: str) -> float | None:
     return float(tok.replace(".", "").replace(",", "."))
 
 
-def _next_amount(tokens: list[str], start: int, limit: int = 8) -> tuple[float | None, int]:
+def _next_amount(tokens: list[str], start: int, limit: int) -> tuple[float | None, int]:
     for i in range(start, min(len(tokens), start + limit)):
         if (val := _amount(tokens[i])) is not None:
             return val, i
     return None, start
 
 
-def _dates(tokens: list[str], start: int, limit: int = 6) -> list[date]:
+def _dates(tokens: list[str], start: int, limit: int) -> list[date]:
     found: list[date] = []
     for tok in tokens[start : start + limit]:
         for d, mo, y in _DATE.findall(tok):
@@ -182,11 +235,16 @@ def _dates(tokens: list[str], start: int, limit: int = 6) -> list[date]:
     return found[:2]
 
 
-def _find(tokens: list[str], pred, start: int = 0) -> int:
-    for i in range(start, len(tokens)):
+def _find(tokens: list[str], pred: Callable[[str], bool], start: int = 0, stop: int | None = None) -> int:
+    for i in range(max(0, start), min(len(tokens), stop if stop is not None else len(tokens))):
         if pred(tokens[i]):
             return i
     return -1
+
+
+def _is_total_label(tokens: list[str], i: int) -> bool:
+    tok = tokens[i]
+    return tok.startswith("Ihre Gesamtkosten") or (tok == "Gesamtkosten" and i > 0 and tokens[i - 1] == "Ihre")
 
 
 def parse_totals(pdf: bytes) -> InvoiceTotals | None:
@@ -195,60 +253,62 @@ def parse_totals(pdf: bytes) -> InvoiceTotals | None:
         tokens = text_tokens(pdf)
     except (ValueError, MemoryError):
         return None
-    net = vat = gross = paid = balance = None
-    period: list[date] = []
-    anchor = -1
 
-    # Layout A: "Summe exkl. USt." net, "+20 % USt." vat, ... "inkl. USt." gross
+    # electricity block: "Summe exkl. USt." net, "+20 % USt." vat, "inkl. USt." gross
+    net = vat = energy = None
     i = _find(tokens, lambda t: t == "Summe exkl. USt.")
     if i >= 0:
-        net, j = _next_amount(tokens, i + 1, 3)
-        k = _find(tokens, lambda t: t.startswith("+") and "USt" in t, j)
-        if net is not None and 0 <= k - j <= 2:
-            vat, j = _next_amount(tokens, k + 1, 3)
-            k = _find(tokens, lambda t: t == "inkl. USt.", j)
-            if vat is not None and 0 <= k - j <= 8:
-                gross, j = _next_amount(tokens, k + 1, 2)
-                period = _dates(tokens, i, k - i)
-                anchor = j
-        if gross is None:
-            net = vat = None
+        n, j = _next_amount(tokens, i + 1, 3)
+        k = _find(tokens, lambda t: t.startswith("+") and "USt" in t, j, j + 3)
+        if n is not None and k >= 0:
+            v, j = _next_amount(tokens, k + 1, 3)
+            k = _find(tokens, lambda t: t.endswith("inkl. USt."), j, j + 9)
+            if v is not None and k >= 0:
+                g, _ = _next_amount(tokens, k + 1, 2)
+                if g is not None and abs(n + v - g) <= 0.05:
+                    net, vat, energy = n, v, g
 
-    # Layout B: "Ihre Gesamtkosten" <period> gross "abzüglich bezahlte Teilbeträge" paid
-    if gross is None:
-        i = _find(tokens, lambda t: t.startswith("Ihre Gesamtkosten"))
-        if i >= 0:
-            period = _dates(tokens, i, 3)
-            gross, anchor = _next_amount(tokens, i + 1, 5)
+    # settlement summary: "Ihre Gesamtkosten" <period> "inkl. USt." total, then
+    # optional subsidy, the part payments made and the balance
+    total = subsidy = paid = balance = None
+    period: list[date] = []
+    for idx in range(len(tokens)):
+        if not _is_total_label(tokens, idx):
+            continue
+        found = _dates(tokens, idx, 4)
+        value, at = _next_amount(tokens, idx + 1, 7)
+        if len(found) == 2 and value is not None:
+            period, total = found, value
+            break
+    if total is None:
+        if energy is None:
+            return None
+        total, at = energy, max(i, 0)
 
-    if gross is None:
-        return None
-    if len(period) < 2:
-        for idx, tok in enumerate(tokens):
-            if "Gesamtkosten" in tok or tok.startswith("Abrechnungszeitraum"):
-                if len(found := _dates(tokens, idx, 4)) == 2:
-                    period = found
-                    break
-
-    k = _find(tokens, lambda t: t.startswith("Teilbetr") or "bezahlte Teilbetr" in t, anchor)
-    if 0 <= k - anchor <= 6:
+    k = _find(tokens, lambda t: t.startswith("Stromkostenzuschuss"), at + 1, at + 4)
+    if k >= 0:
         val, _ = _next_amount(tokens, k + 1, 3)
-        if val is not None:
-            paid = abs(val)
-    k = _find(tokens, lambda t: t in ("Nachzahlung", "Guthaben"), anchor)
-    if 0 <= k - anchor <= 40:
+        subsidy = abs(val) if val is not None else None
+    k = _find(tokens, lambda t: t in ("Teilbeträge", "abzüglich bezahlte Teilbeträge"), at + 1, at + 9)
+    if k >= 0:
+        val, _ = _next_amount(tokens, k + 1, 3)
+        paid = abs(val) if val is not None else None
+    k = _find(tokens, lambda t: t in ("Nachzahlung", "Guthaben"), at + 1, at + 25)
+    if k >= 0:
         val, _ = _next_amount(tokens, k + 1, 2)
         if val is not None:
             balance = -abs(val) if tokens[k] == "Guthaben" else abs(val)
 
-    if gross <= 0 or (net is not None and vat is not None and abs(net + vat - gross) > 0.05):
+    if total <= 0 or (energy is not None and total + 0.05 < energy):
         return None
     return InvoiceTotals(
         period_from=period[0] if period else None,
         period_to=period[1] if len(period) > 1 else None,
-        gross=gross,
-        net=net,
-        vat=vat,
+        total=total,
+        energy_net=net,
+        energy_vat=vat,
+        energy_gross=energy,
+        subsidy=subsidy,
         paid=paid,
         balance=balance,
     )

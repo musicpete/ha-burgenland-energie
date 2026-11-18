@@ -75,7 +75,7 @@ def _bill_attrs(d: AccountData, _today: date) -> dict[str, Any]:
             {
                 "datum": x.ref_date.isoformat(),
                 "zahlbetrag": x.amount,
-                "gesamtbetrag": t.gross if (t := d.invoice_totals.get(x.bill_nr)) else None,
+                "gesamtbetrag": t.total if (t := d.invoice_totals.get(x.bill_nr)) else None,
                 "nr": x.bill_nr,
                 "pdf": d.invoice_links.get(x.bill_nr),
             }
@@ -112,8 +112,10 @@ def _settlement_attrs(d: AccountData, _today: date) -> dict[str, Any]:
         "jahr": last["jahr"],
         "zeitraum_von": last["von"],
         "zeitraum_bis": last["bis"],
-        "netto": last["netto"],
-        "ust": last["ust"],
+        "zuschuss": last["zuschuss"],
+        "kosten": last["kosten"],
+        "strom_netto": last["strom_netto"],
+        "sonstiges": last["sonstiges"],
         "teilbetraege": last["teilbetraege"],
         "saldo": last["saldo"],
         "pdf": last["pdf"],

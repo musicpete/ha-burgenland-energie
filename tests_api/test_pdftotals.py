@@ -32,17 +32,29 @@ def _encode(text: str) -> bytes:
     return raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
 
 
-def _show(text: str) -> bytes:
+# A second font whose CMap maps the same codes to other characters: digits
+# read through the wrong CMap still look like digits, so the choice must be
+# made per font, not per text run.
+_ALT = {ch: code for ch, code in zip(_ALPHABET, sorted(_CODE.values(), reverse=True))}
+_FONTS = {b"F1": _CODE, b"F2": _ALT}
+
+
+def _encode_with(text: str, table: dict[str, int]) -> bytes:
+    raw = b"".join(table[ch].to_bytes(2, "big") for ch in text)
+    return raw.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
+
+
+def _show(text: str, font: bytes = b"F1") -> bytes:
     # split into kerned fragments like the real generator does
     parts = [text[i : i + 3] for i in range(0, len(text), 3)]
-    arr = b"".join(b"(" + _encode(p) + b")-1" for p in parts)
-    return b"BT\n/F1 -9 Tf\n0 0 Td\n[" + arr + b"]TJ\nET\n"
+    arr = b"".join(b"(" + _encode_with(p, _FONTS[font]) + b")-1" for p in parts)
+    return b"BT\n/" + font + b" -9 Tf\n0 0 Td\n[" + arr + b"]TJ\nET\n"
 
 
-def _pdf(lines: list[str]) -> bytes:
-    decoy = {ch: code + 1 for ch, code in _CODE.items()}
-    content = b"q\n" + b"".join(_show(line) for line in lines) + b"Q\n"
-    streams = [_cmap(decoy), content, _cmap(_CODE)]
+def _pdf(lines: list[str], fonts: list[bytes] | None = None) -> bytes:
+    fonts = fonts or [b"F1"] * len(lines)
+    content = b"q\n" + b"".join(_show(line, f) for line, f in zip(lines, fonts)) + b"Q\n"
+    streams = [_cmap(_ALT), content, _cmap(_CODE)]
     out = bytearray(b"%PDF-1.6\n")
     for n, data in enumerate(streams, start=1):
         comp = zlib.compress(data)
@@ -63,14 +75,21 @@ LAYOUT_A = [
     "Strom",
     "inkl. USt.",
     "1.200,00",
+    "Mahnkosten",
+    "10,00",
     "Ihre",
     "Gesamtkosten",
     "01.07.2000",
     "bis",
     "30.06.2001",
+    "inkl. USt.",
+    "1.210,00",
+    "Stromkostenzuschuss",
+    "0 % USt.",
+    "-110,00",
     "Teilbeträge",
     "inkl. USt.",
-    "-1.100,00",
+    "-1.000,00",
     "Nachzahlung",
     "100,00",
     "erster Teilbetrag inkl. USt.",
@@ -82,7 +101,7 @@ LAYOUT_A = [
 LAYOUT_B = [
     "Ihre Gesamtkosten",
     "01.07.2001 bis 30.06.2002",
-    "Strom",
+    "inkl. USt.",
     "2.400,00",
     "abzüglich bezahlte Teilbeträge",
     "Strom",
@@ -99,11 +118,21 @@ def test_tokens_decode_through_cmap() -> None:
     assert tokens == ["Summe exkl. USt.", "Grüße (A)"]
 
 
-def test_layout_with_net_and_vat() -> None:
+def test_tokens_use_one_cmap_per_font() -> None:
+    lines = ["Summe exkl. USt.", "1.000,00", "Gesamtkosten", "389,32"]
+    tokens = text_tokens(_pdf(lines, [b"F1", b"F2", b"F2", b"F1"]))
+    assert tokens == lines
+
+
+def test_settlement_with_fees_and_subsidy() -> None:
     totals = parse_totals(_pdf(LAYOUT_A))
     assert totals is not None
-    assert (totals.net, totals.vat, totals.gross) == (1000.0, 200.0, 1200.0)
-    assert totals.paid == 1100.0
+    assert (totals.energy_net, totals.energy_vat, totals.energy_gross) == (1000.0, 200.0, 1200.0)
+    assert totals.total == 1210.0
+    assert totals.other == 10.0
+    assert totals.subsidy == 110.0
+    assert totals.effective == 1100.0
+    assert totals.paid == 1000.0
     assert totals.balance == 100.0
     assert totals.period_from == date(2000, 7, 1)
     assert totals.period_to == date(2001, 6, 30)
@@ -112,18 +141,19 @@ def test_layout_with_net_and_vat() -> None:
 def test_layout_with_gross_only() -> None:
     totals = parse_totals(_pdf(LAYOUT_B))
     assert totals is not None
-    assert totals.gross == 2400.0
-    assert totals.net is None and totals.vat is None
+    assert totals.total == 2400.0
+    assert totals.energy_net is None and totals.other is None
     assert totals.paid == 2500.0
     assert totals.balance == -100.0
     assert (totals.period_from, totals.period_to) == (date(2001, 7, 1), date(2002, 6, 30))
     assert totals.as_dict()["brutto"] == 2400.0
 
 
-def test_inconsistent_sum_is_rejected() -> None:
+def test_inconsistent_electricity_block_is_ignored() -> None:
     lines = list(LAYOUT_A)
     lines[lines.index("1.200,00")] = "9.999,00"
-    assert parse_totals(_pdf(lines)) is None
+    totals = parse_totals(_pdf(lines))
+    assert totals is not None and totals.total == 1210.0 and totals.energy_gross is None
 
 
 def test_no_summary_and_garbage() -> None:
@@ -140,7 +170,7 @@ def test_read_totals_caches_per_file(tmp_path) -> None:
     cache: dict = {}
     files = {"0001": "a.pdf", "0002": "b.pdf", "0003": "gone.pdf"}
     out = read_totals(tmp_path, files, cache)
-    assert list(out) == ["0001"] and out["0001"].gross == 1200.0
+    assert list(out) == ["0001"] and out["0001"].total == 1210.0
     assert len(cache) == 2
     (tmp_path / "a.pdf").write_bytes(b"x")  # replaced file is parsed again
     assert read_totals(tmp_path, files, cache) == {}
