@@ -1,0 +1,13 @@
+{
+  "domain": "burgenland_energie",
+  "name": "Burgenland Energie (Kundenportal)",
+  "codeowners": ["@musicpete"],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/musicpete/ha-burgenland-energie",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/musicpete/ha-burgenland-energie/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

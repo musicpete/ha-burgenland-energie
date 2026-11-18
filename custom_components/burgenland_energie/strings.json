@@ -1,0 +1,107 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Burgenland Energie customer portal",
+        "description": "The portal login is protected by a captcha, so Home Assistant takes over an existing portal session via its refresh token.\n\n1. Sign in at meine.burgenlandenergie.at and tick **Angemeldet bleiben** (stay signed in).\n2. Create a bookmark with this address and click it on the portal page - the token is copied to the clipboard:\n\n`{bookmarklet}`\n\n   Alternatively: developer tools (F12) → Console → `copy(localStorage.getItem('okc-auth-refreshToken'))`\n3. Paste the token here.\n\nDo not sign out of the portal afterwards, or the token becomes invalid.",
+        "data": {
+          "refresh_token": "Refresh token"
+        },
+        "data_description": {
+          "refresh_token": "Long text from the portal (about 1,900 characters). Stored only in Home Assistant."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Renew portal session",
+        "description": "The portal no longer accepts the stored token (for example after signing out). Sign in again and copy the token as during setup:\n\n`{bookmarklet}`",
+        "data": {
+          "refresh_token": "Refresh token"
+        }
+      }
+    },
+    "error": {
+      "invalid_token": "This does not look like a refresh token. Paste the complete text without spaces.",
+      "invalid_auth": "The portal rejected the token. Sign in again and copy the current token.",
+      "cannot_connect": "Portal unreachable or unexpected response.",
+      "wrong_account": "This token belongs to a different customer account.",
+      "unknown": "Unexpected error, see the log."
+    },
+    "abort": {
+      "already_configured": "This customer account is already configured.",
+      "reauth_successful": "Session renewed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "save_invoices": "Save invoices as PDF",
+          "meter_days": "Days of usage data per run"
+        },
+        "data_description": {
+          "save_invoices": "New invoices are stored in the media folder under burgenland_energie.",
+          "meter_days": "This many days up to yesterday are re-read on every run (late corrections)."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "naechste_teilzahlung": {
+        "name": "Next instalment"
+      },
+      "naechste_teilzahlung_am": {
+        "name": "Next instalment due"
+      },
+      "letzte_rechnung": {
+        "name": "Latest invoice"
+      },
+      "letzte_rechnung_am": {
+        "name": "Latest invoice date"
+      },
+      "bonuspunkte": {
+        "name": "Bonus points"
+      },
+      "arbeitspreis": {
+        "name": "Energy price"
+      },
+      "arbeitspreis_netto": {
+        "name": "Energy price (net)"
+      },
+      "grundpreis": {
+        "name": "Base price per month"
+      },
+      "letzter_messtag": {
+        "name": "Latest metered day"
+      }
+    },
+    "calendar": {
+      "teilzahlungen": {
+        "name": "Instalments"
+      }
+    }
+  },
+  "services": {
+    "download_invoice": {
+      "name": "Download invoice",
+      "description": "Saves an invoice as PDF in the media folder (burgenland_energie).",
+      "fields": {
+        "bill_nr": {
+          "name": "Invoice number",
+          "description": "Leave empty for the latest invoice."
+        }
+      }
+    },
+    "import_meter_data": {
+      "name": "Import usage data",
+      "description": "Re-reads the billed daily values of all meters.",
+      "fields": {
+        "days": {
+          "name": "Days",
+          "description": "Number of days up to yesterday, e.g. 1000 for the full history."
+        }
+      }
+    }
+  }
+}

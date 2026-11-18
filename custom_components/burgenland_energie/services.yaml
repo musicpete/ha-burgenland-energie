@@ -1,0 +1,17 @@
+download_invoice:
+  fields:
+    bill_nr:
+      required: false
+      example: "000001789012"
+      selector:
+        text:
+import_meter_data:
+  fields:
+    days:
+      required: false
+      default: 45
+      selector:
+        number:
+          min: 1
+          max: 2000
+          mode: box

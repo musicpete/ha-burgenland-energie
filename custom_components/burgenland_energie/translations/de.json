@@ -1,0 +1,107 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Burgenland Energie Kundenportal",
+        "description": "Die Anmeldung im Portal ist durch ein Captcha geschützt. Home Assistant übernimmt deshalb eine bestehende Portal-Sitzung über deren Refresh-Token.\n\n1. Melde dich unter meine.burgenlandenergie.at an und setze den Haken **Angemeldet bleiben**.\n2. Lege ein Lesezeichen mit dieser Adresse an und klicke es auf der Portal-Seite an – der Token wird in die Zwischenablage kopiert:\n\n`{bookmarklet}`\n\n   Alternativ: Entwicklertools (F12) → Konsole → `copy(localStorage.getItem('okc-auth-refreshToken'))`\n3. Token hier einfügen.\n\nMelde dich danach im Portal nicht ab, sonst wird der Token ungültig.",
+        "data": {
+          "refresh_token": "Refresh-Token"
+        },
+        "data_description": {
+          "refresh_token": "Langer Text aus dem Portal (etwa 1 900 Zeichen). Wird nur in Home Assistant gespeichert."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Portal-Sitzung erneuern",
+        "description": "Der gespeicherte Token wurde vom Portal nicht mehr akzeptiert (z. B. nach Abmelden im Portal). Melde dich erneut an und kopiere den Token wie bei der Einrichtung:\n\n`{bookmarklet}`",
+        "data": {
+          "refresh_token": "Refresh-Token"
+        }
+      }
+    },
+    "error": {
+      "invalid_token": "Das sieht nicht nach einem Refresh-Token aus. Bitte den kompletten Text ohne Leerzeichen einfügen.",
+      "invalid_auth": "Das Portal hat den Token abgelehnt. Bitte neu anmelden und den aktuellen Token kopieren.",
+      "cannot_connect": "Portal nicht erreichbar oder unerwartete Antwort.",
+      "wrong_account": "Dieser Token gehört zu einem anderen Kundenkonto.",
+      "unknown": "Unerwarteter Fehler, siehe Protokoll."
+    },
+    "abort": {
+      "already_configured": "Dieses Kundenkonto ist bereits eingerichtet.",
+      "reauth_successful": "Sitzung erneuert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Optionen",
+        "data": {
+          "save_invoices": "Rechnungen als PDF speichern",
+          "meter_days": "Tage Verbrauchsdaten pro Lauf"
+        },
+        "data_description": {
+          "save_invoices": "Neue Rechnungen werden im Medienordner unter burgenland_energie abgelegt.",
+          "meter_days": "So viele Tage bis gestern werden bei jedem Lauf neu eingelesen (verspätete Korrekturen)."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "naechste_teilzahlung": {
+        "name": "Nächste Teilzahlung"
+      },
+      "naechste_teilzahlung_am": {
+        "name": "Nächste Teilzahlung fällig"
+      },
+      "letzte_rechnung": {
+        "name": "Letzte Rechnung"
+      },
+      "letzte_rechnung_am": {
+        "name": "Letzte Rechnung vom"
+      },
+      "bonuspunkte": {
+        "name": "Bonuspunkte"
+      },
+      "arbeitspreis": {
+        "name": "Arbeitspreis"
+      },
+      "arbeitspreis_netto": {
+        "name": "Arbeitspreis netto"
+      },
+      "grundpreis": {
+        "name": "Grundpreis pro Monat"
+      },
+      "letzter_messtag": {
+        "name": "Letzter Messtag"
+      }
+    },
+    "calendar": {
+      "teilzahlungen": {
+        "name": "Teilzahlungen"
+      }
+    }
+  },
+  "services": {
+    "download_invoice": {
+      "name": "Rechnung herunterladen",
+      "description": "Speichert eine Rechnung als PDF im Medienordner (burgenland_energie).",
+      "fields": {
+        "bill_nr": {
+          "name": "Rechnungsnummer",
+          "description": "Leer lassen für die neueste Rechnung."
+        }
+      }
+    },
+    "import_meter_data": {
+      "name": "Verbrauchsdaten importieren",
+      "description": "Liest die verrechneten Tageswerte aller Zähler neu ein.",
+      "fields": {
+        "days": {
+          "name": "Tage",
+          "description": "Anzahl Tage bis gestern, z. B. 1000 für die ganze Historie."
+        }
+      }
+    }
+  }
+}
