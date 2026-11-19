@@ -98,6 +98,9 @@
           "unvollstaendig": "Incomplete",
           "fehler": "Error"
         }
+      },
+      "fanclub_kosten": {
+        "name": "Energy community costs (billing year)"
       }
     },
     "calendar": {
@@ -128,6 +131,20 @@
         "days": {
           "name": "Days",
           "description": "Number of days up to yesterday, e.g. 1000 for the full history."
+        }
+      }
+    },
+    "import_fanclub_invoices": {
+      "name": "Import energy community invoices",
+      "description": "Saves the invoice PDFs from Fanclub Burgenland Energieunabhängig e-mails (fetched through the IMAP integration) next to the other invoices and reads their amounts. Mails from other senders are ignored.",
+      "fields": {
+        "imap_entry": {
+          "name": "IMAP entry",
+          "description": "The IMAP integration entry whose folder holds the Fanclub mails."
+        },
+        "uid": {
+          "name": "Mail UIDs",
+          "description": "UID of the mail (from the imap_content event), or a list/range such as '1-9' or '3,5'."
         }
       }
     }

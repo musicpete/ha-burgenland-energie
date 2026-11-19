@@ -98,6 +98,9 @@
           "unvollstaendig": "Unvollständig",
           "fehler": "Fehler"
         }
+      },
+      "fanclub_kosten": {
+        "name": "Fanclub-Kosten (Abrechnungsjahr)"
       }
     },
     "calendar": {
@@ -128,6 +131,20 @@
         "days": {
           "name": "Tage",
           "description": "Anzahl Tage bis gestern, z. B. 1000 für die ganze Historie."
+        }
+      }
+    },
+    "import_fanclub_invoices": {
+      "name": "Fanclub-Rechnungen importieren",
+      "description": "Speichert die Rechnungs-PDFs aus E-Mails des Fanclub Burgenland Energieunabhängig (über die IMAP-Integration abgerufen) neben den anderen Rechnungen und liest ihre Beträge aus. Mails anderer Absender werden ignoriert.",
+      "fields": {
+        "imap_entry": {
+          "name": "IMAP-Eintrag",
+          "description": "Der Eintrag der IMAP-Integration, dessen Ordner die Fanclub-Mails enthält."
+        },
+        "uid": {
+          "name": "Mail UIDs",
+          "description": "UID der Mail (aus dem imap_content-Ereignis) oder eine Liste bzw. ein Bereich wie '1-9' oder '3,5'."
         }
       }
     }

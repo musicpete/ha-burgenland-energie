@@ -17,6 +17,10 @@ INVOICE_DIR = "burgenland_energie"
 
 SERVICE_DOWNLOAD_INVOICE = "download_invoice"
 SERVICE_IMPORT_METER_DATA = "import_meter_data"
+SERVICE_IMPORT_FANCLUB = "import_fanclub_invoices"
+ATTR_IMAP_ENTRY = "imap_entry"
+ATTR_UID = "uid"
+MAX_FANCLUB_MAILS_PER_CALL = 200
 ATTR_BILL_NR = "bill_nr"
 ATTR_ALL_MISSING = "all_missing"
 METER_DATA_STALE_DAYS = 75

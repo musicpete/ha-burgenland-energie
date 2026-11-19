@@ -38,6 +38,7 @@ energy per meter into Home Assistant.
 | Part payments | Next instalment and its due date, remaining instalments, a calendar with all due dates |
 | Invoices | All invoices with the amount to pay and a link to each PDF; optional automatic PDF archive in the media folder |
 | Completeness | One sensor that checks every invoice is archived as a verified PDF, usage data is current and the last fetch worked |
+| Energy community | Invoices of Fanclub Burgenland Energieunabhängig from e-mail (via the IMAP integration): PDFs archived next to the other invoices, amounts per invoice, month and billing year |
 | Bonus points | Current balance of the Bonus- und Servicewelt |
 | Energy | Billed energy per meter and day as long-term statistics, with full history on demand |
 
@@ -121,6 +122,7 @@ point of delivery (Zählpunkt).
 | `sensor.burgenland_energie_abrechnung_gesamtkosten` | EUR | **Total cost incl. VAT** of the latest settlement, read from the saved PDF (needs the PDF archive option); attributes `jahr`, `zeitraum_von`, `zeitraum_bis`, `zuschuss` (state subsidy), `kosten` (total minus subsidy), `strom_netto`, `sonstiges` (fees besides electricity), `teilbetraege`, `saldo`, `pdf`, `abrechnungen` (all settlements, oldest first, each also with `strom_ust`, `strom_brutto`, `kwh` (billed kWh per tariff slug) and `kwh_gesamt`) |
 | `sensor.burgenland_energie_datenstand` | enum | `vollstaendig` / `unvollstaendig` / `fehler`; attributes `rechnungen_gesamt`, `rechnungen_gespeichert`, `rechnungen_fehlend`, `pdf_archiv`, `messdaten_bis`, `messdaten_alter_tage`, `letzter_abruf`, `fehler`, `hinweise` |
 | `sensor.burgenland_energie_letzte_rechnung_am` | date | End of the billing period (settlements) or invoice date |
+| `sensor.burgenland_energie_fanclub_kosten` | EUR | Energy community costs incl. VAT of the running billing year (July–June, by month of supply); attributes `abrechnungsjahr`, `letzte_rechnung_am`, `abgerechnet_bis`, `zaehlpunkte`, `jahre` and `monate` (kWh per point of delivery, `netto`, `brutto`, `gebuehr_netto`), `rechnungen` (each with `kwh`, `energie_netto`, `gebuehr_netto`, `netto`, `ust`, `brutto`, `vollstaendig`, `pdf`) |
 | `sensor.burgenland_energie_bonuspunkte` | points | Bonus points; attribute `faktor` |
 | `sensor.burgenland_energie_<tarif>_arbeitspreis` | EUR/kWh | Energy price incl. 20 % VAT; attributes `netto`, `tarif`, `preisgarantie_bis`, `bindung_bis` |
 | `sensor.burgenland_energie_<tarif>_arbeitspreis_netto` | EUR/kWh | Energy price excl. VAT |
@@ -155,6 +157,42 @@ Re-reads the billed daily values of all meters.
 | Field | Default | Description |
 | --- | --- | --- |
 | `days` | 45 | Days up to yesterday; e.g. `1500` loads the full history |
+
+### `burgenland_energie.import_fanclub_invoices`
+
+Saves the invoice PDFs of energy community e-mails (Fanclub Burgenland
+Energieunabhängig) and reads their amounts. The mails are fetched through
+Home Assistant's [IMAP integration](https://www.home-assistant.io/integrations/imap/);
+only mails from the community's sender domain are processed. Importing a
+mail twice is harmless.
+
+| Field | Description |
+| --- | --- |
+| `imap_entry` | The IMAP integration entry whose folder holds the community mails |
+| `uid` | Mail UID, a list or a range, e.g. `7`, `3,5` or `1-9` |
+
+Recurring import: put the community mails in their own folder (in Gmail a
+label, e.g. via a filter on the sender), point an IMAP entry at it and let
+an automation import each new mail:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: imap_content
+    event_data:
+      entry_id: <your IMAP entry id>
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.sender.endswith('fcbe.at') }}"
+actions:
+  - action: burgenland_energie.import_fanclub_invoices
+    data:
+      imap_entry: <your IMAP entry id>
+      uid: "{{ trigger.event.data.uid }}"
+```
+
+For the mails already in the folder, call the action once with a range
+(e.g. `1-50`); mails from other senders are ignored.
 
 ## Dashboard examples
 

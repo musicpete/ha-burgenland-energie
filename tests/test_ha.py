@@ -273,11 +273,12 @@ async def test_actions_are_admin_only(recorder_mock, enable_custom_integrations,
     from homeassistant.exceptions import Unauthorized
 
     await _setup(hass)
-    for service in ("download_invoice", "import_meter_data"):
+    for service in ("download_invoice", "import_meter_data", "import_fanclub_invoices"):
         with pytest.raises(Unauthorized):
+            data = {"imap_entry": "x", "uid": "1"} if service == "import_fanclub_invoices" else {}
             await hass.services.async_call(
-                DOMAIN, service, {}, blocking=True, context=Context(user_id=hass_read_only_user.id),
-                return_response=service == "download_invoice",
+                DOMAIN, service, data, blocking=True, context=Context(user_id=hass_read_only_user.id),
+                return_response=service != "import_meter_data",
             )
 
 

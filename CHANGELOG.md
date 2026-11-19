@@ -3,6 +3,19 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] – 2026-11-19
+
+### Added
+- Energy community invoices (Fanclub Burgenland Energieunabhängig): the new
+  action `burgenland_energie.import_fanclub_invoices` takes the e-mails
+  through Home Assistant's IMAP integration, saves the PDF attachments next
+  to the other invoices and reads the amounts. Only mails from the
+  community's sender domain are processed; attachments of other mails are
+  never downloaded.
+- Sensor "Fanclub-Kosten (Abrechnungsjahr)": community costs incl. VAT of the
+  running billing year (July–June), with every invoice (kWh, energy and fee
+  net, VAT, gross, signed PDF link) and totals per month and billing year.
+
 ## [0.4.3] – 2026-11-19
 
 ### Added

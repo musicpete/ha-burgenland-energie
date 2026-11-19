@@ -184,6 +184,9 @@ class AccountData:
     invoice_links: dict[str, str] = field(default_factory=dict)
     # Settlement totals read from the saved PDFs (bill_nr -> InvoiceTotals).
     invoice_totals: dict[str, Any] = field(default_factory=dict)
+    # Energy community invoices saved from e-mail (newest first) and signed links (nr -> url).
+    fanclub_invoices: list[Any] = field(default_factory=list)
+    fanclub_links: dict[str, str] = field(default_factory=dict)
 
     @property
     def tariffs(self) -> list[Tariff]:

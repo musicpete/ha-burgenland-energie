@@ -20,3 +20,15 @@ import_meter_data:
           min: 1
           max: 2000
           mode: box
+import_fanclub_invoices:
+  fields:
+    imap_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: imap
+    uid:
+      required: true
+      example: "1-9"
+      selector:
+        text:

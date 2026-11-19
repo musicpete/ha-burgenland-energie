@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 
 from . import BurgenlandEnergieConfigEntry
 from .api import AccountData, Tariff, slugify
+from .fanclub import billing_year, summary as fanclub_summary
 from .const import CONF_SAVE_INVOICES, DOMAIN, MANUFACTURER, METER_DATA_STALE_DAYS, SIGNAL_METER_UPDATED
 from .importer import MeterImporter, statistic_id
 
@@ -147,6 +148,48 @@ def _instalment_attrs(d: AccountData, today: date) -> dict[str, Any]:
     }
 
 
+def _fanclub_value(d: AccountData, today: date) -> float | None:
+    """Energy community costs (incl. VAT) of the running billing year, by month of supply."""
+    if not d.fanclub_invoices:
+        return None
+    year = billing_year(today.strftime("%Y-%m"))
+    return fanclub_summary(d.fanclub_invoices)["jahre"].get(year, {}).get("brutto", 0.0)
+
+
+def _fanclub_attrs(d: AccountData, today: date) -> dict[str, Any]:
+    invs = d.fanclub_invoices
+    if not invs:
+        return {}
+    agg = fanclub_summary(invs)
+    return {
+        "abrechnungsjahr": billing_year(today.strftime("%Y-%m")),
+        "letzte_rechnung_am": invs[0].issued.isoformat(),
+        "abgerechnet_bis": max(i.period_to for i in invs).isoformat(),
+        "zaehlpunkte": sorted({i.pod_name for i in invs}),
+        "jahre": agg["jahre"],
+        "monate": agg["monate"],
+        "rechnungen": [
+            {
+                "nr": i.nr,
+                "datum": i.issued.isoformat(),
+                "faellig": i.due.isoformat() if i.due else None,
+                "zaehlpunkt": i.pod_name,
+                "von": i.period_from.isoformat(),
+                "bis": i.period_to.isoformat(),
+                "kwh": i.kwh,
+                "energie_netto": i.net_of("bezug"),
+                "gebuehr_netto": i.net_of("gebuehr"),
+                "netto": i.net,
+                "ust": i.vat,
+                "brutto": i.gross,
+                "vollstaendig": i.complete,
+                "pdf": d.fanclub_links.get(i.nr),
+            }
+            for i in invs
+        ],
+    }
+
+
 ACCOUNT_SENSORS: tuple[AccountSensorDescription, ...] = (
     AccountSensorDescription(
         key="naechste_teilzahlung",
@@ -193,6 +236,16 @@ ACCOUNT_SENSORS: tuple[AccountSensorDescription, ...] = (
         value=lambda d, _t: d.bills[0].ref_date if d.bills else None,
     ),
     AccountSensorDescription(
+        key="fanclub_kosten",
+        translation_key="fanclub_kosten",
+        device_class=SensorDeviceClass.MONETARY,
+        native_unit_of_measurement="EUR",
+        suggested_display_precision=2,
+        icon="mdi:solar-power-variant-outline",
+        value=_fanclub_value,
+        attrs=_fanclub_attrs,
+    ),
+    AccountSensorDescription(
         key="bonuspunkte",
         translation_key="bonuspunkte",
         native_unit_of_measurement="Punkte",
@@ -206,7 +259,7 @@ ACCOUNT_SENSORS: tuple[AccountSensorDescription, ...] = (
 class AccountSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
     # Lists and invoice numbers stay out of the recorder database.
-    _unrecorded_attributes = frozenset({"rechnungen", "plan", "rechnungsnummer", "pdf", "abrechnungen"})
+    _unrecorded_attributes = frozenset({"rechnungen", "plan", "rechnungsnummer", "pdf", "abrechnungen", "monate", "jahre"})
     entity_description: AccountSensorDescription
 
     def __init__(self, entry: BurgenlandEnergieConfigEntry, description: AccountSensorDescription) -> None:

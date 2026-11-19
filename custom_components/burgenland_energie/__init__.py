@@ -9,9 +9,11 @@ folder.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import aiohttp
@@ -45,6 +47,10 @@ from .const import (
     ATTR_ALL_MISSING,
     ATTR_BILL_NR,
     ATTR_DAYS,
+    ATTR_IMAP_ENTRY,
+    ATTR_UID,
+    MAX_FANCLUB_MAILS_PER_CALL,
+    SERVICE_IMPORT_FANCLUB,
     CONF_METER_DAYS,
     CONF_REFRESH_TOKEN,
     CONF_SAVE_INVOICES,
@@ -58,7 +64,7 @@ from .const import (
     SERVICE_IMPORT_METER_DATA,
     STARTUP_DELAY_S,
 )
-from . import invoices
+from . import fanclub, invoices
 from .importer import MeterImporter
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,6 +97,66 @@ def _entries(hass: HomeAssistant) -> list[BurgenlandEnergieConfigEntry]:
         for e in hass.config_entries.async_entries(DOMAIN)
         if getattr(e, "runtime_data", None) is not None
     ]
+
+
+def parse_uids(text: str) -> list[str]:
+    """'7', '1-9' or '1,4,7-9' -> UIDs as strings, at most MAX_FANCLUB_MAILS_PER_CALL."""
+    out: list[str] = []
+    for part in str(text).replace(" ", "").split(","):
+        if not part:
+            continue
+        lo, _, hi = part.partition("-")
+        if not lo.isdigit() or (hi and not hi.isdigit()):
+            raise vol.Invalid(f"invalid UID: {part}")
+        first, last = int(lo), int(hi or lo)
+        if last < first or last - first >= MAX_FANCLUB_MAILS_PER_CALL:
+            raise vol.Invalid(f"invalid UID range: {part}")
+        out.extend(str(u) for u in range(first, last + 1))
+    if not out or len(out) > MAX_FANCLUB_MAILS_PER_CALL:
+        raise vol.Invalid("give between 1 and %d UIDs" % MAX_FANCLUB_MAILS_PER_CALL)
+    return list(dict.fromkeys(out))
+
+
+async def async_import_fanclub_mail(hass: HomeAssistant, imap_entry: str, uid: str) -> dict:
+    """Save the invoice PDFs of one Fanclub e-mail (fetched through the IMAP integration)."""
+    msg = await hass.services.async_call(
+        "imap", "fetch", {"entry": imap_entry, "uid": uid}, blocking=True, return_response=True
+    )
+    if not isinstance(msg, dict) or not fanclub.is_fanclub_sender(msg.get("sender")):
+        return {"uid": uid, "status": "kein Fanclub-Absender"}
+    folder = invoices.invoice_dir(hass)
+    saved: list[str] = []
+    overviews: list[bytes] = []
+    first_nr: str | None = None
+    for part, info in sorted((msg.get("parts") or {}).items()):
+        if not isinstance(info, dict) or info.get("content_type") != "application/pdf":
+            continue
+        res = await hass.services.async_call(
+            "imap", "fetch_part", {"entry": imap_entry, "uid": uid, "part": part}, blocking=True, return_response=True
+        )
+        try:
+            pdf = base64.b64decode((res or {}).get("part_data") or b"", validate=False)
+        except (binascii.Error, ValueError):
+            continue
+        if not pdf.startswith(b"%PDF-") or len(pdf) < 1024:
+            continue
+        inv = await hass.async_add_executor_job(fanclub.parse_invoice, pdf)
+        if inv is None:
+            overviews.append(pdf)
+            continue
+        first_nr = first_nr or inv.nr
+        await hass.async_add_executor_job(invoices.write_pdf, folder, inv.filename(), pdf)
+        saved.append(inv.filename())
+    if overviews and first_nr:
+        try:
+            sent = datetime.fromisoformat(str(msg.get("date"))).date()
+        except ValueError:
+            sent = date.today()
+        for pdf in overviews[:1]:
+            name = fanclub.overview_filename(sent, first_nr)
+            await hass.async_add_executor_job(invoices.write_pdf, folder, name, pdf)
+            saved.append(name)
+    return {"uid": uid, "status": "ok" if saved else "keine Rechnung", "gespeichert": saved}
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -168,6 +234,32 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             {vol.Optional(ATTR_DAYS, default=DEFAULT_METER_DAYS): vol.All(vol.Coerce(int), vol.Range(1, 2000))}
         ),
     )
+
+    async def _import_fanclub(call: ServiceCall) -> ServiceResponse:
+        imap_entry = call.data[ATTR_IMAP_ENTRY]
+        entry = hass.config_entries.async_get_entry(imap_entry)
+        if entry is None or entry.domain != "imap":
+            raise HomeAssistantError("Not an IMAP integration entry")
+        results = []
+        for uid in call.data[ATTR_UID]:
+            try:
+                results.append(await async_import_fanclub_mail(hass, imap_entry, uid))
+            except (HomeAssistantError, OSError) as err:
+                results.append({"uid": uid, "status": f"Fehler: {err}"})
+        for be_entry in _entries(hass):
+            await be_entry.runtime_data.coordinator.async_request_refresh()
+        return {"mails": results}
+
+    async_register_admin_service(
+        hass,
+        DOMAIN,
+        SERVICE_IMPORT_FANCLUB,
+        _import_fanclub,
+        schema=vol.Schema(
+            {vol.Required(ATTR_IMAP_ENTRY): cv.string, vol.Required(ATTR_UID): vol.All(cv.string, parse_uids)}
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     return True
 
 
@@ -185,6 +277,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BurgenlandEnergieConfigE
     importer = MeterImporter(hass, client)
 
     totals_cache: dict = {}
+    fanclub_cache: dict = {}
 
     async def _update() -> AccountData:
         try:
@@ -201,6 +294,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BurgenlandEnergieConfigE
         data.invoice_totals = await hass.async_add_executor_job(
             invoices.read_totals, folder, data.invoice_files, totals_cache
         )
+        data.fanclub_invoices = await hass.async_add_executor_job(fanclub.scan, folder, fanclub_cache)
+        data.fanclub_links = invoices.signed_links(hass, [i.nr for i in data.fanclub_invoices])
         return data
 
     async def _save_new_invoices(data: AccountData, folder) -> None:
