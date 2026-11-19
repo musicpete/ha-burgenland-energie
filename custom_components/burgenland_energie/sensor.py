@@ -131,13 +131,19 @@ def _instalment_attrs(d: AccountData, today: date) -> dict[str, Any]:
     if not nxt:
         return {}
     remaining = [i for i in d.instalments if i.due >= today]
+    overdue = [i for i in d.instalments if i.due < today and (i.amount_open or 0) > 0]
     return {
         "faellig_am": nxt.due.isoformat(),
         "status": nxt.status,
         "offen": nxt.amount_open,
         "verbleibende_teilzahlungen": len(remaining),
         "summe_verbleibend": round(sum(i.amount for i in remaining), 2),
-        "plan": [{"faellig_am": i.due.isoformat(), "betrag": i.amount, "status": i.status} for i in d.instalments],
+        "ueberfaellig_anzahl": len(overdue),
+        "ueberfaellig_summe": round(sum(i.amount_open or 0 for i in overdue), 2),
+        "plan": [
+            {"faellig_am": i.due.isoformat(), "betrag": i.amount, "offen": i.amount_open, "status": i.status}
+            for i in d.instalments
+        ],
     }
 
 

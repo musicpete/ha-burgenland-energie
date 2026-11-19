@@ -160,6 +160,9 @@ async def test_sensors_calendar_and_token_storage(recorder_mock, enable_custom_i
     assert float(st.state) == 100.0
     assert st.attributes["verbleibende_teilzahlungen"] == 2
     assert st.attributes["summe_verbleibend"] == 200.0
+    assert st.attributes["ueberfaellig_anzahl"] == 1
+    assert st.attributes["ueberfaellig_summe"] == 100.0
+    assert st.attributes["plan"][0]["offen"] == 100.0
     nxt = hass.states.get("sensor.burgenland_energie_naechste_teilzahlung_am")
     assert nxt.state == (dt_util.now().date() + timedelta(days=10)).isoformat()
 

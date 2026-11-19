@@ -3,6 +3,14 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.3] – 2026-11-19
+
+### Added
+- Part-payment plan entries carry the open amount (`offen`) next to the
+  status, and the next-instalment sensor reports overdue instalments
+  (`ueberfaellig_anzahl`, `ueberfaellig_summe`: due date passed and an
+  amount still open).
+
 ## [0.4.2] – 2026-11-18
 
 ### Added
